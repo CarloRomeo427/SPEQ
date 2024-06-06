@@ -3,7 +3,7 @@ import argparse
 import datetime
 import gym
 
-from agent import SacAgent
+from agent_utd import SacAgent
 
 # TODO use shared util.utilTH in SAC-extention
 from util.utilsTH import SparseRewardEnv
@@ -117,7 +117,7 @@ def run():
         env = SparseRewardEnv(env, rew_thresh=args.sparsity_th)
         env._max_episode_steps = env.wrapped_env._max_episode_steps
 
-    label = args.env + "_gt_" + str(args.seed) #str(datetime.datetime.now().isoformat())
+    label = args.env + "_utd_" + str(args.seed)#str(datetime.datetime.now().isoformat())
     log_dir = os.path.join('runs', args.info, label)
 
     if args.distributional: # TODO remove

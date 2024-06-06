@@ -2,8 +2,10 @@ import os
 import argparse
 import datetime
 import gym
+import numpy as np
+import torch
 
-from agent import SacAgent
+from agent_mb import SacAgent
 
 # TODO use shared util.utilTH in SAC-extention
 from util.utilsTH import SparseRewardEnv
@@ -15,6 +17,10 @@ import customenvs
 customenvs.register_mbpo_environments()
 
 from agent4profile import SacAgent4Profile
+
+from dynamics import EnsembleDynamics, EnsembleDynamicsModel
+from dynamics_utils import StandardScaler
+from termination_fns import get_termination_fn
 
 
 def run():
@@ -117,8 +123,35 @@ def run():
         env = SparseRewardEnv(env, rew_thresh=args.sparsity_th)
         env._max_episode_steps = env.wrapped_env._max_episode_steps
 
-    label = args.env + "_gt_" + str(args.seed) #str(datetime.datetime.now().isoformat())
+    label = args.env + "_mb_" + str(datetime.datetime.now().isoformat())
     log_dir = os.path.join('runs', args.info, label)
+
+
+    ### Dynamics params
+
+
+    dynamics_model = EnsembleDynamicsModel(
+        obs_dim=np.prod(env.observation_space.shape),
+        action_dim=np.prod(env.action_space.shape),
+        hidden_dims=[200, 200, 200, 200],
+        num_ensemble=7,
+        num_elites=5,
+        weight_decays=[2.5e-5, 5e-5, 7.5e-5, 7.5e-5, 1e-4],
+        device=args.gpu_id
+    )
+    dynamics_optim = torch.optim.Adam(
+        dynamics_model.parameters(),
+        lr=1e-3
+    )
+    scaler = StandardScaler()
+    termination_fn = get_termination_fn(task=args.env.split("-")[0].lower())
+    dynamics = EnsembleDynamics(
+        dynamics_model,
+        dynamics_optim,
+        scaler,
+        termination_fn,
+        penalty_coef=2.5,
+    )
 
     if args.distributional: # TODO remove
         raise NotImplementedError()
@@ -128,7 +161,7 @@ def run():
         if args.profile:
             agent = SacAgent4Profile(env=env, log_dir=log_dir, **configs)
         else:
-            agent = SacAgent(env=env, log_dir=log_dir, **configs)
+            agent = SacAgent(env=env, log_dir=log_dir, dynamics=dynamics, **configs)
     agent.run()
 
 

@@ -274,22 +274,22 @@ class SacAgent:
                     # update priority weights
                     self.memory.update_priority(indices, errors.cpu().numpy())
             
-            
+            for i in range(3):
                 # policy and alpha update
-            if self.per:
-                batch, indices, weights = self.memory.sample(self.batch_size)
-            else:
-                batch = self.memory.sample(self.batch_size)
-                weights = 1.
+                if self.per:
+                    batch, indices, weights = self.memory.sample(self.batch_size)
+                else:
+                    batch = self.memory.sample(self.batch_size)
+                    weights = 1.
 
-        
-            policy_loss, entropies = self.calc_policy_loss(batch, weights) # added by tH 20210705
-            update_params(self.policy_optim, self.policy, policy_loss, self.grad_clip)
+            
+                policy_loss, entropies = self.calc_policy_loss(batch, weights) # added by tH 20210705
+                update_params(self.policy_optim, self.policy, policy_loss, self.grad_clip)
 
-            if self.entropy_tuning:
-                entropy_loss = self.calc_entropy_loss(entropies, weights)
-                update_params(self.alpha_optim, None, entropy_loss)
-                self.alpha = self.log_alpha.exp()
+                if self.entropy_tuning:
+                    entropy_loss = self.calc_entropy_loss(entropies, weights)
+                    update_params(self.alpha_optim, None, entropy_loss)
+                    self.alpha = self.log_alpha.exp()
 
     def calc_critic_4redq_loss(self, batch, weights):
         states, actions, rewards, next_states, dones = batch

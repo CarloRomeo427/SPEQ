@@ -3,7 +3,10 @@ import numpy as np
 import torch
 from torch.optim import Adam
 from torch.utils.tensorboard import SummaryWriter
-from rltorch.memory import MultiStepMemory, PrioritizedMemory
+from rltorch.memory import PrioritizedMemory
+from memory import MultiStepMemory
+import time
+import copy
 
 from model import TwinnedQNetwork, GaussianPolicy, RandomizedEnsembleNetwork
 from utils import grad_false, hard_update, soft_update, to_batch, update_params, RunningMeanStats
@@ -14,14 +17,13 @@ import math
 
 class SacAgent:
 
-    def __init__(self, env, log_dir, num_steps=3000000, batch_size=256,
+    def __init__(self, env, log_dir, dynamics, num_steps=3000000, batch_size=256,
                  lr=0.0003, hidden_units=[256, 256], memory_size=1e6,
                  gamma=0.99, tau=0.005, entropy_tuning=True, ent_coef=0.2,
                  multi_step=1, per=False, alpha=0.6, beta=0.4,
                  beta_annealing=0.0001, grad_clip=None, updates_per_step=1,
                  start_steps=10000, log_interval=10, target_update_interval=1,
                  eval_interval=1000, cuda=0, seed=0,
-                 # added by TH 20210707
                  eval_runs=1, huber=0, layer_norm=0,
                  method=None, target_entropy=None, target_drop_rate=0.0, critic_update_delay=1):
         self.env = env
@@ -37,6 +39,7 @@ class SacAgent:
         self.target_drop_rate = target_drop_rate
 
         self.device = torch.device("cuda:" + str(cuda) if torch.cuda.is_available() else "cpu")
+        self.dynamics = dynamics
 
         # policy
         self.policy = GaussianPolicy(
@@ -89,17 +92,20 @@ class SacAgent:
 
         if per:
             # replay memory with prioritied experience replay
-            # See https://github.com/ku2482/rltorch/blob/master/rltorch/memory
             self.memory = PrioritizedMemory(
                 memory_size, self.env.observation_space.shape,
                 self.env.action_space.shape, self.device, gamma, multi_step,
                 alpha=alpha, beta=beta, beta_annealing=beta_annealing)
         else:
             # replay memory without prioritied experience replay
-            # See https://github.com/ku2482/rltorch/blob/master/rltorch/memory
             self.memory = MultiStepMemory(
                 memory_size, self.env.observation_space.shape,
                 self.env.action_space.shape, self.device, gamma, multi_step)
+
+        # expanded memory for rollouts
+        self.expanded_memory = MultiStepMemory(
+            memory_size, self.env.observation_space.shape,
+            self.env.action_space.shape, self.device, gamma, multi_step)
 
         self.log_dir = log_dir
         self.model_dir = os.path.join(log_dir, 'model')
@@ -134,7 +140,9 @@ class SacAgent:
 
     def run(self):
         while True:
+            start_time = time.time()
             self.train_episode()
+            print(f"Time for current episode: {np.round(time.time() - start_time)}", flush=True)
             if self.steps > self.num_steps:
                 break
 
@@ -179,7 +187,6 @@ class SacAgent:
                 next_q = torch.min(next_q1, next_q2) + self.alpha * next_entropies
             else:
                 raise NotImplementedError()
-        # rescale rewards by num step TH20210705
         target_q = (rewards / (self.multi_step * 1.0)) + (1.0 - dones) * self.gamma_n * next_q
         return target_q
 
@@ -187,6 +194,7 @@ class SacAgent:
         self.episodes += 1
         episode_reward = 0.
         episode_steps = 0
+
         done = False
         state = self.env.reset()
 
@@ -195,6 +203,7 @@ class SacAgent:
             next_state, reward, done, _ = self.env.step(action)
             self.steps += 1
             episode_steps += 1
+#---------#
             episode_reward += reward
 
             # ignore done if the agent reach time horizons
@@ -211,14 +220,9 @@ class SacAgent:
                 with torch.no_grad():
                     curr_q1, curr_q2 = self.calc_current_q(*batch)
                 target_q = self.calc_target_q(*batch)
-                # fixed by tH20210715
                 error = (0.5 * torch.abs(curr_q1 - target_q) + 0.5 * torch.abs(curr_q2 - target_q)).item()
-                # We need to give true done signal with addition to masked done
-                # signal to calculate multi-step rewards.
                 self.memory.append(state, action, reward, next_state, masked_done, error, episode_done=done)
             else:
-                # We need to give true done signal with addition to masked done
-                # signal to calculate multi-step rewards.
                 self.memory.append(state, action, reward, next_state, masked_done, episode_done=done)
 
             if self.is_update():
@@ -227,10 +231,12 @@ class SacAgent:
             if self.steps % self.eval_interval == 0:
                 self.evaluate()
                 self.save_models()
+                self.dynamics.train_on_memory(self.memory.get_all())
+                self.copy_and_expand_memory()
+                print(f"Memory size: {len(self.memory)} | Expanded memory size: {len(self.expanded_memory)}")
 
             state = next_state
 
-        # We log running mean of training rewards.
         self.train_rewards.append(episode_reward)
 
         if self.episodes % self.log_interval == 0:
@@ -243,27 +249,28 @@ class SacAgent:
     def learn(self):
         self.learning_steps += 1
 
-        # critic update
         if (self.learning_steps - 1) % self.critic_update_delay == 0:
-            
             for _ in range(self.updates_per_step):
                 if self.per:
-                    # batch with indices and priority weights
-                    batch, indices, weights = self.memory.sample(self.batch_size)
+                    batch_o, indices_o, weights_o = self.memory.sample(int(self.batch_size / 2))
+                    batch_e, indices_e, weights_e = self.expanded_memory.sample(int(self.batch_size / 2))
+                    batch = tuple(torch.cat([batch_o[i], batch_e[i]], dim=0) for i in range(5))
+                    indices = torch.cat([indices_o, indices_e], dim=0)
+                    weights = torch.cat([weights_o, weights_e], dim=0)
                 else:
-                    batch = self.memory.sample(self.batch_size)
-                    # set priority weights to 1 when we don't use PER.
-                    weights = 1.
+                    batch_o = self.memory.sample(int(self.batch_size / 2))
+                    batch_e = self.expanded_memory.sample(int(self.batch_size / 2))
+                    batch = tuple(torch.cat([batch_o[i], batch_e[i]], dim=0) for i in range(5))
+                    weights = torch.ones(self.batch_size).to(self.device)
 
                 if self.method == "redq":
                     losses, errors, mean_q1, mean_q2 = self.calc_critic_4redq_loss(batch, weights)
                     for i in range(self.critic.N):
                         update_params(getattr(self, "q" + str(i) + "_optim"),
-                                            getattr(self.critic, "Q" + str(i)),
-                                            losses[i], self.grad_clip)
+                                    getattr(self.critic, "Q" + str(i)),
+                                    losses[i], self.grad_clip)
                 else:
                     q1_loss, q2_loss, errors, mean_q1, mean_q2 = self.calc_critic_loss(batch, weights)
-
                     update_params(self.q1_optim, self.critic.Q1, q1_loss, self.grad_clip)
                     update_params(self.q2_optim, self.critic.Q2, q2_loss, self.grad_clip)
 
@@ -271,53 +278,78 @@ class SacAgent:
                     soft_update(self.critic_target, self.critic, self.tau)
 
                 if self.per:
-                    # update priority weights
                     self.memory.update_priority(indices, errors.cpu().numpy())
-            
-            
-                # policy and alpha update
-            if self.per:
-                batch, indices, weights = self.memory.sample(self.batch_size)
-            else:
-                batch = self.memory.sample(self.batch_size)
-                weights = 1.
 
+        if self.per:
+            batch, indices, weights = self.expanded_memory.sample(self.batch_size)
+        else:
+            batch_o = self.memory.sample(int(self.batch_size / 2))
+            batch_e = self.expanded_memory.sample(int(self.batch_size / 2))
+            batch = tuple(torch.cat([batch_o[i], batch_e[i]], dim=0) for i in range(5))
+            weights = torch.ones(self.batch_size).to(self.device)
+
+        policy_loss, entropies = self.calc_policy_loss(batch, weights)
+        update_params(self.policy_optim, self.policy, policy_loss, self.grad_clip)
+
+        if self.entropy_tuning:
+            entropy_loss = self.calc_entropy_loss(entropies, weights)
+            update_params(self.alpha_optim, None, entropy_loss)
+            self.alpha = self.log_alpha.exp()
+
+    def copy_and_expand_memory(self):
+        self.expanded_memory = copy.deepcopy(self.memory)
+        self.perform_rollouts()
+
+    def perform_rollouts(self, n_rollouts=1):
+        states, _, _, _, _ = self.expanded_memory.get_all()
+        new_states, new_actions, new_rewards, new_next_states, new_dones = [], [], [], [], []
+
+        states = states.cpu().numpy()        
         
-            policy_loss, entropies = self.calc_policy_loss(batch, weights) # added by tH 20210705
-            update_params(self.policy_optim, self.policy, policy_loss, self.grad_clip)
 
-            if self.entropy_tuning:
-                entropy_loss = self.calc_entropy_loss(entropies, weights)
-                update_params(self.alpha_optim, None, entropy_loss)
-                self.alpha = self.log_alpha.exp()
+        for i in range(len(states)):
+            for j in range(n_rollouts):
+                state = states[i].reshape(1, -1)
+                action, _, _ = self.policy.sample(torch.tensor(state, dtype=torch.float32).to(self.device))
+                action = action.detach().cpu().numpy()
+                next_state, reward, done, _ = self.dynamics.step(state, action)
+
+                new_states.append(state.squeeze(0))
+                new_actions.append(action.squeeze(0))
+                new_rewards.append(reward.squeeze(0))
+                new_next_states.append(next_state.squeeze(0))
+                new_dones.append(done.squeeze(0))
+
+                if done:
+                    break
+
+        new_states = np.array(new_states)
+        new_actions = np.array(new_actions)
+        new_rewards = np.array(new_rewards).reshape(-1, 1)
+        new_next_states = np.array(new_next_states)
+        new_dones = np.array(new_dones).reshape(-1, 1)
+
+        self.expanded_memory.reset()        
+        self.expanded_memory.load((new_states, new_actions, new_rewards, new_next_states, new_dones))
 
     def calc_critic_4redq_loss(self, batch, weights):
         states, actions, rewards, next_states, dones = batch
         curr_qs = self.critic.allQs(states, actions)
-
         target_q = self.calc_target_q(*batch)
-
-        # TD errors for updating priority weights
-        errors = torch.abs(curr_qs[0].detach() - target_q) # TODO better to use average of all errors?
-        # We log means of Q to monitor training.
+        errors = torch.abs(curr_qs[0].detach() - target_q)
         mean_q1 = curr_qs[0].detach().mean().item()
         mean_q2 = curr_qs[1].detach().mean().item()
 
-        # Critic loss is mean squared TD errors with priority weights.
         losses = []
         for curr_q in curr_qs:
             losses.append(torch.mean((curr_q - target_q).pow(2) * weights))
         return losses, errors, mean_q1, mean_q2
 
     def calc_critic_loss(self, batch, weights):
-        assert self.method == "sac" or self.method == "duvn" or self.method == "monosac", "This method is only for sac or duvn or monosac method"
-
+        assert self.method in ["sac", "duvn", "monosac"], "This method is only for sac, duvn, or monosac method"
         curr_q1, curr_q2 = self.calc_current_q(*batch)
         target_q = self.calc_target_q(*batch)
-
-        # TD errors for updating priority weights
         errors = torch.abs(curr_q1.detach() - target_q)
-        # We log means of Q to monitor training.
         mean_q1 = curr_q1.detach().mean().item()
         mean_q2 = curr_q2.detach().mean().item()
 
@@ -327,24 +359,16 @@ class SacAgent:
 
     def calc_policy_loss(self, batch, weights):
         states, actions, rewards, next_states, dones = batch
-
-        # We re-sample actions to calculate expectations of Q.
         sampled_action, entropy, _ = self.policy.sample(states)
-        # expectations of Q with clipped double Q technique
+
         if self.method == "redq":
             q = self.critic.averageQ(states, sampled_action)
         else:
             q1, q2 = self.critic(states, sampled_action)
-            if (self.method == "duvn") or (self.method == "monosac"):
-                q2 = q1 # discard q2
-            if self.target_drop_rate > 0.0:
-                q = 0.5 * (q1 + q2)
-            else:
-                q = torch.min(q1, q2)
-        # Policy objective is maximization of (Q + alpha * entropy) with
-        # priority weights.
+            if self.method in ["duvn", "monosac"]:
+                q2 = q1
+            q = torch.min(q1, q2)
         policy_loss = torch.mean((- q - self.alpha * entropy) * weights)
-
         return policy_loss, entropy
 
     def calc_entropy_loss(self, entropy, weights):
@@ -354,9 +378,7 @@ class SacAgent:
     def evaluate(self):
         episodes = self.eval_runs
         returns = np.zeros((episodes,), dtype=np.float32)
-
-        # for return bias estimation TH
-        sar_buf = [[] for _ in range(episodes) ] # episodes x (satte, action , reward)
+        sar_buf = [[] for _ in range(episodes)]
 
         for i in range(episodes):
             state = self.env.reset()
@@ -367,16 +389,13 @@ class SacAgent:
                 next_state, reward, done, _ = self.env.step(action)
                 episode_reward += reward
                 state = next_state
-                # MCE store all (state, action, reward) TH 20210723
                 sar_buf[i].append([state, action, reward])
 
             returns[i] = episode_reward
 
         mean_return = np.mean(returns)
 
-        # calculate mean / std return bias. TH 20210801
-        # - calculate MCE future discounted return (in backward)
-        mc_discounted_return = [deque() for _ in range(episodes) ]
+        mc_discounted_return = [deque() for _ in range(episodes)]
         for i in range(episodes):
             for re_tran in reversed(sar_buf[i]):
                 if len(mc_discounted_return[i]) > 0:
@@ -384,13 +403,12 @@ class SacAgent:
                 else:
                     mcret = re_tran[2]
                 mc_discounted_return[i].appendleft(mcret)
-        # - calculate normalized MCE return by averaging all MCE returns
+
         norm_coef = np.mean(list(itertools.chain.from_iterable(mc_discounted_return)))
         norm_coef = math.fabs(norm_coef) + 0.000001
-        # - estimate return for all state action, and normalized score
+
         norm_scores = [[] for _ in range(episodes)]
         for i in range(episodes):
-            # calculate normalized score
             states = np.array(sar_buf[i], dtype="object")[:, 0].tolist()
             actions = np.array(sar_buf[i], dtype="object")[:, 1].tolist()
             with torch.no_grad():
@@ -399,45 +417,41 @@ class SacAgent:
                 if self.method == "redq":
                     q = self.critic.averageQ(state, action)
                 else:
+                    #--------#
                     q1, q2 = self.critic(state, action)
                     q = 0.5 * (q1 + q2)
                 qs = q.to('cpu').numpy()
             for j in range(len(sar_buf[i])):
                 score = (qs[j][0] - mc_discounted_return[i][j]) / norm_coef
                 norm_scores[i].append(score)
-        # calculate std
+
         flatten_norm_score = list(itertools.chain.from_iterable(norm_scores))
         mean_norm_score = np.mean(flatten_norm_score)
         std_norm_score = np.std(flatten_norm_score)
-        print("mean norm score " + str(mean_norm_score))
-        print("std norm score " + str(std_norm_score))
 
-        self.writer.add_scalar(
-            'reward/test', mean_return, self.steps)
+        self.writer.add_scalar('reward/test', mean_return, self.steps)
         print('-' * 60)
-        print(f'Num steps: {self.steps:<5}  '
-              f'reward: {mean_return:<5.1f}')
+        print(f'Num steps: {self.steps:<5}  reward: {mean_return:<5.1f}')
         print('-' * 60)
-        #
-        with open(self.log_dir + "/" + "reward.csv", "a") as f:
-            f.write(str(self.steps) + "," + str(mean_return) + ",\n")
-            f.flush()
-        #
-        with open(self.log_dir + "/" + "avrbias.csv", "a") as f:
-            f.write(str(self.steps) + "," + str(mean_norm_score) + ",\n")
-            f.flush()
-        #
-        with open(self.log_dir + "/" + "stdbias.csv", "a") as f:
-            f.write(str(self.steps) + "," + str(std_norm_score) + ",\n")
+
+        with open(self.log_dir + "/reward.csv", "a") as f:
+            f.write(f"{self.steps},{mean_return},\n")
             f.flush()
 
+        with open(self.log_dir + "/avrbias.csv", "a") as f:
+            f.write(f"{self.steps},{mean_norm_score},\n")
+            f.flush()
+
+        with open(self.log_dir + "/stdbias.csv", "a") as f:
+            f.write(f"{self.steps},{std_norm_score},\n")
+            f.flush()
 
     def save_models(self):
         self.policy.save(os.path.join(self.model_dir, 'policy.pth'))
         self.critic.save(os.path.join(self.model_dir, 'critic.pth'))
-        self.critic_target.save(
-            os.path.join(self.model_dir, 'critic_target.pth'))
+        self.critic_target.save(os.path.join(self.model_dir, 'critic_target.pth'))
 
     def __del__(self):
         self.writer.close()
         self.env.close()
+
