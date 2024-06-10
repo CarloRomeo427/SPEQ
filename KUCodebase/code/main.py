@@ -23,6 +23,10 @@ def run():
     parser.add_argument("-env", type=str, default="HalfCheetah-v2",
                         help="Environment name, default = HalfCheetahBulletEnv-v0")
     parser.add_argument('-seed', type=int, default=0)
+    parser.add_argument("-name", type=str, default="gt",
+                        help="Run name, default = GroundTruth")
+    parser.add_argument("-folder", type=str, default="runs/drq",
+                        help="Folder name")
     #added byTH 20210705
     # common
     parser.add_argument("-info", type=str, help="Information or name of the run")
@@ -117,8 +121,11 @@ def run():
         env = SparseRewardEnv(env, rew_thresh=args.sparsity_th)
         env._max_episode_steps = env.wrapped_env._max_episode_steps
 
-    label = args.env + "_gt_" + str(args.seed) #str(datetime.datetime.now().isoformat())
-    log_dir = os.path.join('runs', args.info, label)
+    # label = args.env + "_gt_" + str(args.seed) #str(datetime.datetime.now().isoformat())
+    path = os.path.join(args.folder, args.env, str(args.seed), args.name)
+    # log_dir = os.path.join('runs', args.info, label)
+    if not os.path.exists(path):
+        os.makedirs(path)
 
     if args.distributional: # TODO remove
         raise NotImplementedError()
@@ -126,9 +133,9 @@ def run():
         #agent = IQNSacAgent(env=env, log_dir=log_dir, **configs)
     else:
         if args.profile:
-            agent = SacAgent4Profile(env=env, log_dir=log_dir, **configs)
+            agent = SacAgent4Profile(env=env, log_dir=path, **configs)
         else:
-            agent = SacAgent(env=env, log_dir=log_dir, **configs)
+            agent = SacAgent(env=env, log_dir=path, **configs)
     agent.run()
 
 

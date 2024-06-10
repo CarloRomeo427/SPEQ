@@ -231,9 +231,8 @@ class SacAgent:
             if self.steps % self.eval_interval == 0:
                 self.evaluate()
                 self.save_models()
-                self.dynamics.train_on_memory(self.memory.get_all(), max_epochs=10)
-                self.copy_and_expand_memory()
-                print(f"Memory size: {len(self.memory)} | Expanded memory size: {len(self.expanded_memory)}")
+                self.dynamics.train_on_memory(self.memory.get_all(), max_epochs=20)
+                print(f"Memory size: {len(self.memory)}")
 
             state = next_state
 
@@ -254,7 +253,8 @@ class SacAgent:
                 if self.per:
                     batch, indices, weights = self.expanded_memory.sample(self.batch_size)
                 else:
-                    batch = self.expanded_memory.sample(self.batch_size)
+                    # batch = self.expanded_memory.sample(self.batch_size)
+                    batch = self.get_batch()
                     weights = 1.
 
                 if self.method == "redq":
@@ -277,7 +277,8 @@ class SacAgent:
         if self.per:
             batch, indices, weights = self.expanded_memory.sample(self.batch_size)
         else:
-            batch = self.expanded_memory.sample(self.batch_size)
+            # batch = self.expanded_memory.sample(self.batch_size)
+            batch = self.get_batch()
             weights = 1.
 
         policy_loss, entropies = self.calc_policy_loss(batch, weights)
@@ -292,24 +293,35 @@ class SacAgent:
         self.expanded_memory = copy.deepcopy(self.memory)
         self.perform_rollouts()
 
-    def perform_rollouts(self, n_rollouts=1):
-        batch = self.expanded_memory.sample(self.batch_size)
-        new_states, new_actions, new_rewards, new_next_states, new_dones = [], [], [], [], []
+    def get_batch(self):
+        real_batch = self.memory.sample(self.batch_size)
+        fake_batch = self.perform_rollouts(real_batch)
 
+        states = torch.cat((real_batch[0], torch.from_numpy(fake_batch[0]).to(self.device)), dim=0)
+        actions = torch.cat((real_batch[1], torch.from_numpy(fake_batch[1]).to(self.device)), dim=0)
+        rewards = torch.cat((real_batch[2], torch.from_numpy(fake_batch[2]).to(self.device)), dim=0)
+        next_states = torch.cat((real_batch[3], torch.from_numpy(fake_batch[3]).to(self.device)), dim=0)
+        dones = torch.cat((real_batch[4], torch.from_numpy(fake_batch[4]).to(self.device)), dim=0)
+
+        return (states, actions, rewards, next_states, dones)
+
+    def perform_rollouts(self, batch, n_rollouts=1):
         batch_states = batch[0].cpu().numpy()
-        batch_actions = batch[1].cpu().numpy()
-        batch_rewards = batch[2].cpu().numpy()
-        batch_next_states = batch[3].cpu().numpy()
-        batch_dones = batch[4].cpu().numpy()
 
-        for i in range(len(batch_states)):
-            for j in range(n_rollouts):
-                state = batch_states[i].reshape(1, -1)
+        new_states = []
+        new_actions = []
+        new_rewards = []
+        new_next_states = []
+        new_dones = []
+
+        for state in batch_states:
+            for _ in range(n_rollouts):
+                state = state.reshape(1, -1)
                 action, _, _ = self.policy.sample(torch.tensor(state, dtype=torch.float32).to(self.device))
                 action = action.detach().cpu().numpy()
                 next_state, reward, done, _ = self.dynamics.step(state, action)
 
-                new_states.append(next_state)
+                new_states.append(state)
                 new_actions.append(action)
                 new_rewards.append(reward)
                 new_next_states.append(next_state)
@@ -318,14 +330,13 @@ class SacAgent:
                 if done:
                     break
 
-        new_states = np.array(new_states)
-        new_actions = np.array(new_actions)
-        new_rewards = np.array(new_rewards).reshape(-1, 1)
-        new_next_states = np.array(new_next_states)
-        new_dones = np.array(new_dones).reshape(-1, 1)
+        new_states = np.vstack(new_states).squeeze()
+        new_actions = np.vstack(new_actions).squeeze()
+        new_rewards = np.vstack(new_rewards).reshape(-1, 1)
+        new_next_states = np.vstack(new_next_states).squeeze()
+        new_dones = np.vstack(new_dones).reshape(-1, 1)
 
-        for state, action, reward, next_state, done in zip(new_states, new_actions, new_rewards, new_next_states, new_dones):
-            self.expanded_memory.append(state, action, reward, next_state, done, episode_done=done)
+        return (new_states, new_actions, new_rewards, new_next_states, new_dones)
 
     def calc_critic_4redq_loss(self, batch, weights):
         states, actions, rewards, next_states, dones = batch

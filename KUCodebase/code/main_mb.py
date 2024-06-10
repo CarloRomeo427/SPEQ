@@ -22,14 +22,20 @@ from dynamics import EnsembleDynamics, EnsembleDynamicsModel
 from dynamics_utils import StandardScaler
 from termination_fns import get_termination_fn
 
-
 def run():
     parser = argparse.ArgumentParser()
-    # replaced wtih SAC-extention args 20210705
+    # replaced with SAC-extention args 20210705
     parser.add_argument("-env", type=str, default="HalfCheetah-v2",
                         help="Environment name, default = HalfCheetahBulletEnv-v0")
     parser.add_argument('-seed', type=int, default=0)
-    #added byTH 20210705
+    parser.add_argument("-name", type=str, default="mb",
+                        help="Run name, default = GroundTruth")
+    parser.add_argument("-folder", type=str, default="runs/drq",
+                        help="Folder name")
+    parser.add_argument("--dynamics-hidden-dims", type=int, nargs='*', default=[200, 200, 200, 200])
+    parser.add_argument("--dynamics-weight-decay", type=float, nargs='*', default=[2.5e-5, 5e-5, 7.5e-5, 7.5e-5, 1e-4])
+    parser.add_argument("--dynamics-lr", type=float, default=1e-3)
+    # added by TH 20210705
     # common
     parser.add_argument("-info", type=str, help="Information or name of the run")
     parser.add_argument("-frames", type=int, default=1_000_000,
@@ -104,7 +110,7 @@ def run():
         'cuda': args.gpu_id, # args.cuda,
         'seed': args.seed,
 
-        # adde by TH
+        # added by TH
         'eval_runs': args.eval_runs,
         'huber': args.huber, # TODO remove
         'layer_norm': args.layer_norm,
@@ -117,40 +123,41 @@ def run():
 
     env = gym.make(args.env)
 
-    # make sparse en: TH 20210705
+    # make sparse env: TH 20210705
     if args.sparsity_th > 0.0 :
         print("Evaluation in sparse reward setting with lambda = " + str(args.sparsity_th))
         env = SparseRewardEnv(env, rew_thresh=args.sparsity_th)
         env._max_episode_steps = env.wrapped_env._max_episode_steps
 
-    label = args.env + "_mb_" + str(datetime.datetime.now().isoformat())
-    log_dir = os.path.join('runs', args.info, label)
-
-
-    ### Dynamics params
-
+    # label = args.env + "_gt_" + str(args.seed) #str(datetime.datetime.now().isoformat())
+    path = os.path.join(args.folder, args.env, str(args.seed), args.name)
+    # log_dir = os.path.join('runs', args.info, label)
+    if not os.path.exists(path):
+        os.makedirs(path)
 
     dynamics_model = EnsembleDynamicsModel(
-        obs_dim=np.prod(env.observation_space.shape),
-        action_dim=np.prod(env.action_space.shape),
-        hidden_dims=[200, 200, 200, 200],
-        num_ensemble=7,
-        num_elites=5,
-        weight_decays=[2.5e-5, 5e-5, 7.5e-5, 7.5e-5, 1e-4],
+        obs_dim=env.observation_space.shape[0],
+        action_dim=env.action_space.shape[0],
+        hidden_dims=args.dynamics_hidden_dims,
+        num_ensemble=7,  # You might want to make this configurable
+        num_elites=5,  # You might want to make this configurable
+        weight_decays=args.dynamics_weight_decay,
         device=args.gpu_id
     )
+
     dynamics_optim = torch.optim.Adam(
         dynamics_model.parameters(),
-        lr=1e-3
+        lr=args.dynamics_lr
     )
+
     scaler = StandardScaler()
     termination_fn = get_termination_fn(task=args.env.split("-")[0].lower())
+
     dynamics = EnsembleDynamics(
-        dynamics_model,
-        dynamics_optim,
-        scaler,
-        termination_fn,
-        penalty_coef=2.5,
+        model=dynamics_model,
+        optim=dynamics_optim,
+        scaler=scaler,
+        terminal_fn=termination_fn,
     )
 
     if args.distributional: # TODO remove
@@ -159,9 +166,9 @@ def run():
         #agent = IQNSacAgent(env=env, log_dir=log_dir, **configs)
     else:
         if args.profile:
-            agent = SacAgent4Profile(env=env, log_dir=log_dir, **configs)
+            agent = SacAgent4Profile(env=env, log_dir=path, **configs)
         else:
-            agent = SacAgent(env=env, log_dir=log_dir, dynamics=dynamics, **configs)
+            agent = SacAgent(env=env, log_dir=path, dynamics=dynamics, **configs)
     agent.run()
 
 

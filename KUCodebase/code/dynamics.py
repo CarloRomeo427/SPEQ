@@ -504,7 +504,8 @@ class EnsembleDynamicsModel(nn.Module):
         self.num_ensemble = num_ensemble
         self.num_elites = num_elites
         self._with_reward = with_reward
-        self.device = torch.device(device)
+        # self.device = torch.device(device)
+        self.device = torch.device("cuda:" + str(device) if torch.cuda.is_available() else "cpu")
 
         self.activation = activation()
 
