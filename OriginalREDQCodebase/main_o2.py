@@ -3,7 +3,7 @@ import numpy as np
 import torch
 import time
 import sys
-from redq.algos.redq_sac import REDQSACAgent
+from redq.algos.redq_sac_o2 import REDQSACAgent
 from redq.algos.core import mbpo_epoches, test_agent
 from redq.utils.run_utils import setup_logger_kwargs
 from redq.utils.bias_utils import log_bias_evaluation
@@ -153,7 +153,7 @@ def redq_sac(env_name, seed=0, epochs='mbpo', steps_per_epoch=1000,
         # horizon (that is, when it's an artificial terminal signal
         # that isn't based on the agent's state)
         ep_len += 1
-        d = False if ep_len == max_ep_len else d
+        d = False if ep_len == max_ep_len else d ### CRUCIAL POINT FOR ONLINE TRAINING
 
         # give new data to agent
         agent.store_data(o, a, r, o2, d)
@@ -174,6 +174,7 @@ def redq_sac(env_name, seed=0, epochs='mbpo', steps_per_epoch=1000,
         if (t+1) % steps_per_epoch == 0:
             epoch = t // steps_per_epoch
 
+            agent.finetune_offline(epochs=100, x=5000) ### TRAINING: PI, Q WITH UTD, NO ALPHA
             # Test the performance of the deterministic version of the agent.
             test_agent(agent, test_env, max_ep_len, logger) # add logging here
             if evaluate_bias:
@@ -220,7 +221,7 @@ if __name__ == '__main__':
     parser.add_argument('-env', type=str, default='Hopper-v2')
     parser.add_argument('-seed', type=int, default=0)
     parser.add_argument('-epochs', type=int, default=-1) # -1 means use mbpo epochs
-    parser.add_argument('-exp_name', type=str, default='redq_sac')
+    parser.add_argument('-exp_name', type=str, default='redq_sac_o3')
     parser.add_argument('-data_dir', type=str, default='./data/')
     parser.add_argument('-debug', action='store_true')
     # added by TH 20211108

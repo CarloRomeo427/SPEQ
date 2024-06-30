@@ -17,6 +17,53 @@ def weights_init_(m):
         torch.nn.init.xavier_uniform_(m.weight, gain=1)
         torch.nn.init.constant_(m.bias, 0)
 
+# class ReplayBuffer:
+#     """
+#     A simple FIFO experience replay buffer
+#     """
+#     def __init__(self, obs_dim, act_dim, size):
+#         """
+#         :param obs_dim: size of observation
+#         :param act_dim: size of the action
+#         :param size: size of the buffer
+#         """
+#         ## init buffers as numpy arrays
+#         self.obs1_buf = np.zeros([size, obs_dim], dtype=np.float32)
+#         self.obs2_buf = np.zeros([size, obs_dim], dtype=np.float32)
+#         self.acts_buf = np.zeros([size, act_dim], dtype=np.float32)
+#         self.rews_buf = np.zeros(size, dtype=np.float32)
+#         self.done_buf = np.zeros(size, dtype=np.float32)
+#         self.ptr, self.size, self.max_size = 0, 0, size
+
+#     def store(self, obs, act, rew, next_obs, done):
+#         """
+#         data will get stored in the pointer's location
+#         """
+#         self.obs1_buf[self.ptr] = obs
+#         self.obs2_buf[self.ptr] = next_obs
+#         self.acts_buf[self.ptr] = act
+#         self.rews_buf[self.ptr] = rew
+#         self.done_buf[self.ptr] = done
+#         ## move the pointer to store in next location in buffer
+#         self.ptr = (self.ptr+1) % self.max_size
+#         ## keep track of the current buffer size
+#         self.size = min(self.size+1, self.max_size)
+
+#     def sample_batch(self, batch_size=32, idxs=None):
+#         """
+#         :param batch_size: size of minibatch
+#         :param idxs: specify indexes if you want specific data points
+#         :return: mini-batch data as a dictionary
+#         """
+#         if idxs is None:
+#             idxs = np.random.randint(0, self.size, size=batch_size)
+#         return dict(obs1=self.obs1_buf[idxs],
+#                     obs2=self.obs2_buf[idxs],
+#                     acts=self.acts_buf[idxs],
+#                     rews=self.rews_buf[idxs],
+#                     done=self.done_buf[idxs],
+#                     idxs=idxs)
+
 class ReplayBuffer:
     """
     A simple FIFO experience replay buffer
@@ -33,7 +80,9 @@ class ReplayBuffer:
         self.acts_buf = np.zeros([size, act_dim], dtype=np.float32)
         self.rews_buf = np.zeros(size, dtype=np.float32)
         self.done_buf = np.zeros(size, dtype=np.float32)
+        self.episode_ids = np.zeros(size, dtype=np.int32)
         self.ptr, self.size, self.max_size = 0, 0, size
+        self.current_episode_id = 0
 
     def store(self, obs, act, rew, next_obs, done):
         """
@@ -44,10 +93,15 @@ class ReplayBuffer:
         self.acts_buf[self.ptr] = act
         self.rews_buf[self.ptr] = rew
         self.done_buf[self.ptr] = done
+        self.episode_ids[self.ptr] = self.current_episode_id
+
         ## move the pointer to store in next location in buffer
         self.ptr = (self.ptr+1) % self.max_size
         ## keep track of the current buffer size
         self.size = min(self.size+1, self.max_size)
+        
+        if done:
+            self.current_episode_id += 1
 
     def sample_batch(self, batch_size=32, idxs=None):
         """
@@ -63,6 +117,135 @@ class ReplayBuffer:
                     rews=self.rews_buf[idxs],
                     done=self.done_buf[idxs],
                     idxs=idxs)
+
+    def sample_batch_with_episode_ids(self, batch_size=32):
+        """
+        Sample a batch of transitions along with their episode IDs.
+        :param batch_size: size of minibatch
+        :return: mini-batch data as a dictionary including episode IDs
+        """
+        idxs = np.random.randint(0, self.size, size=batch_size)
+        return dict(obs1=self.obs1_buf[idxs],
+                    obs2=self.obs2_buf[idxs],
+                    acts=self.acts_buf[idxs],
+                    rews=self.rews_buf[idxs],
+                    done=self.done_buf[idxs],
+                    episode_ids=self.episode_ids[idxs],
+                    idxs=idxs)
+    
+    def sample_all(self):
+        """
+        Sample all transitions in the buffer.
+        :return: all data as a dictionary
+        """
+        return dict(obs1=self.obs1_buf[:self.size],
+                    obs2=self.obs2_buf[:self.size],
+                    acts=self.acts_buf[:self.size],
+                    rews=self.rews_buf[:self.size],
+                    done=self.done_buf[:self.size],
+                    episode_ids=self.episode_ids[:self.size])
+    
+    def filter_top_x_percent(self, x=0.5):
+        
+        all_batches = self.sample_all()
+        episode_rewards = {}
+        
+        for i in range(len(all_batches['obs1'])):
+            episode_id = all_batches['episode_ids'][i]
+            reward = all_batches['rews'][i]
+            if episode_id not in episode_rewards:
+                episode_rewards[episode_id] = 0
+            episode_rewards[episode_id] += reward
+
+        sorted_episodes = sorted(episode_rewards.items(), key=lambda item: item[1], reverse=True)
+        top_x_percent_episodes = [item[0] for item in sorted_episodes[:int(len(sorted_episodes) * x)]]
+
+        filtered_batches = {
+        'obs1': [],
+        'obs2': [],
+        'acts': [],
+        'rews': [],
+        'done': [],
+        'episode_ids': []
+    }
+
+        for i in range(len(all_batches['obs1'])):
+            episode_id = all_batches['episode_ids'][i]
+            if episode_id in top_x_percent_episodes:
+                filtered_batches['obs1'].append(all_batches['obs1'][i])
+                filtered_batches['obs2'].append(all_batches['obs2'][i])
+                filtered_batches['acts'].append(all_batches['acts'][i])
+                filtered_batches['rews'].append(all_batches['rews'][i])
+                filtered_batches['done'].append(all_batches['done'][i])
+                filtered_batches['episode_ids'].append(all_batches['episode_ids'][i])
+
+        # # Convert lists to numpy arrays for consistency
+        # for key in filtered_batches:
+        #     filtered_batches[key] = np.array(filtered_batches[key])
+
+        return dict(obs1=filtered_batches['obs1'],
+                    obs2=filtered_batches['obs2'],
+                    acts=filtered_batches['acts'],
+                    rews=filtered_batches['rews'],
+                    done=filtered_batches['done'],
+                    episode_ids=filtered_batches['episode_ids'])
+
+        
+    def filter_top_x_transitions(self, x=5000):
+        """Filter the top x transitions based on episode rewards"""
+        
+        all_batches = self.sample_all()
+        episode_rewards = {}
+        
+        # Aggregate rewards for each episode
+        for i in range(len(all_batches['obs1'])):
+            episode_id = all_batches['episode_ids'][i]
+            reward = all_batches['rews'][i]
+            if episode_id not in episode_rewards:
+                episode_rewards[episode_id] = 0
+            episode_rewards[episode_id] += reward
+
+        # Sort episodes by total reward in descending order
+        sorted_episodes = sorted(episode_rewards.items(), key=lambda item: item[1], reverse=True)
+        top_x_percent_episodes = [item[0] for item in sorted_episodes]
+
+        filtered_batches = {
+            'obs1': [],
+            'obs2': [],
+            'acts': [],
+            'rews': [],
+            'done': [],
+            'episode_ids': []
+        }
+
+        # Accumulate transitions from top episodes until we reach the desired number of transitions
+        accumulated_transitions = 0
+        for episode_id in top_x_percent_episodes:
+            for i in range(len(all_batches['obs1'])):
+                if all_batches['episode_ids'][i] == episode_id:
+                    filtered_batches['obs1'].append(all_batches['obs1'][i])
+                    filtered_batches['obs2'].append(all_batches['obs2'][i])
+                    filtered_batches['acts'].append(all_batches['acts'][i])
+                    filtered_batches['rews'].append(all_batches['rews'][i])
+                    filtered_batches['done'].append(all_batches['done'][i])
+                    filtered_batches['episode_ids'].append(all_batches['episode_ids'][i])
+                    accumulated_transitions += 1
+                    if accumulated_transitions >= x:
+                        break
+            if accumulated_transitions >= x:
+                break
+
+        return dict(obs1=filtered_batches['obs1'],
+                    obs2=filtered_batches['obs2'],
+                    acts=filtered_batches['acts'],
+                    rews=filtered_batches['rews'],
+                    done=filtered_batches['done'],
+                    episode_ids=filtered_batches['episode_ids'])
+
+
+
+
+
 
 
 class Mlp(nn.Module):
