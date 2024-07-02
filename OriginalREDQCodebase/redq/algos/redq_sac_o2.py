@@ -6,6 +6,7 @@ import torch.nn.functional as F
 import torch.optim as optim
 from redq.algos.core import TanhGaussianPolicy, Mlp, soft_update_model1_with_model2, ReplayBuffer, \
     mbpo_target_entropy_dict
+import wandb
 
 
 def get_probabilistic_num_min(num_mins):
@@ -27,7 +28,7 @@ class REDQSACAgent(object):
                  alpha=0.2, auto_alpha=True, target_entropy='mbpo',
                  start_steps=5000, delay_update_steps='auto',
                  utd_ratio=20, num_Q=10, num_min=2, q_target_mode='min',
-                 policy_update_delay=20,
+                 policy_update_delay=20, expectile=0.6,
                  target_drop_rate=0.0, layer_norm=False):
         self.policy_net = TanhGaussianPolicy(obs_dim, act_dim, hidden_sizes, action_limit=act_limit).to(device)
         self.q_net_list, self.q_target_net_list = [], []
@@ -75,6 +76,7 @@ class REDQSACAgent(object):
         self.q_target_mode = q_target_mode
         self.policy_update_delay = policy_update_delay
         self.device = device
+        self.expectile = expectile
 
     def __get_current_num_data(self):
         return self.replay_buffer.size
@@ -224,81 +226,11 @@ class REDQSACAgent(object):
                              Alpha=self.alpha, LogPi=log_prob_a_tilda.detach().cpu().numpy(),
                              PreTanh=pretanh.abs().detach().cpu().numpy().reshape(-1))
 
+                wandb.log({"policy_loss": policy_loss.cpu().item(), "mean_loss_q": q_loss_all.cpu().item() / self.num_Q
+                           })
+
         if num_update == 0:
             logger.store(LossPi=0, LossQ1=0, LossAlpha=0, Q1Vals=0, Alpha=0, LogPi=0, PreTanh=0)
-
-    def train_offline(self):
-        num_update = 0 if self.__get_current_num_data() <= self.delay_update_steps else self.utd_ratio
-
-        batch = self.replay_buffer.sample_batch_with_episode_ids(self.replay_buffer.size)
-        episode_rewards = {}
-
-        for i in range(self.replay_buffer.size):
-            episode_id = batch['episode_ids'][i]
-            reward = batch['rews'][i]
-            if episode_id not in episode_rewards:
-                episode_rewards[episode_id] = 0
-            episode_rewards[episode_id] += reward
-
-        sorted_episodes = sorted(episode_rewards.items(), key=lambda item: item[1], reverse=True)
-        top_x_percent_episodes = [item[0] for item in sorted_episodes[:int(len(sorted_episodes) * 0.5)]]
-
-        ### 1. Reduce the threshold to 25%; 2. Implement UTD training; 3. Understand how many steps should be done on sampled data
-
-        top_idxs = [i for i in range(self.replay_buffer.size) if batch['episode_ids'][i] in top_x_percent_episodes]
-
-        # Shuffle the top indices
-        np.random.shuffle(top_idxs)
-
-        for i_update in range(len(top_idxs) // self.batch_size):
-            # Sample a random batch of indices
-            batch_indices = np.random.choice(top_idxs, self.batch_size, replace=False)
-            batch_data = self.replay_buffer.sample_batch(self.batch_size, idxs=batch_indices)
-
-            obs_tensor = Tensor(batch_data['obs1']).to(self.device)
-            obs_next_tensor = Tensor(batch_data['obs2']).to(self.device)
-            acts_tensor = Tensor(batch_data['acts']).to(self.device)
-            rews_tensor = Tensor(batch_data['rews']).unsqueeze(1).to(self.device)
-            done_tensor = Tensor(batch_data['done']).unsqueeze(1).to(self.device)
-
-            """Q loss"""
-            y_q, sample_idxs = self.get_redq_q_target_no_grad(obs_next_tensor, rews_tensor, done_tensor)
-            q_prediction_list = []
-            for q_i in range(self.num_Q):
-                q_prediction = self.q_net_list[q_i](torch.cat([obs_tensor, acts_tensor], 1))
-                q_prediction_list.append(q_prediction)
-            q_prediction_cat = torch.cat(q_prediction_list, dim=1)
-            y_q = y_q.expand((-1, self.num_Q)) if y_q.shape[1] == 1 else y_q
-            q_loss_all = self.mse_criterion(q_prediction_cat, y_q) * self.num_Q
-
-            for q_i in range(self.num_Q):
-                self.q_optimizer_list[q_i].zero_grad()
-            q_loss_all.backward()
-
-            """policy and alpha loss"""
-            a_tilda, mean_a_tilda, log_std_a_tilda, log_prob_a_tilda, _, pretanh = self.policy_net.forward(obs_tensor)
-            q_a_tilda_list = []
-            for sample_idx in range(self.num_Q):
-                self.q_net_list[sample_idx].requires_grad_(False)
-                q_a_tilda = self.q_net_list[sample_idx](torch.cat([obs_tensor, a_tilda], 1))
-                q_a_tilda_list.append(q_a_tilda)
-            q_a_tilda_cat = torch.cat(q_a_tilda_list, 1)
-            ave_q = torch.mean(q_a_tilda_cat, dim=1, keepdim=True)
-            policy_loss = (self.alpha * log_prob_a_tilda - ave_q).mean()
-            self.policy_optimizer.zero_grad()
-            policy_loss.backward()
-            for sample_idx in range(self.num_Q):
-                self.q_net_list[sample_idx].requires_grad_(True)
-
-            alpha_loss = Tensor([0])
-
-            """update networks"""
-            for q_i in range(self.num_Q):
-                self.q_optimizer_list[q_i].step()
-            self.policy_optimizer.step()
-
-            for q_i in range(self.num_Q):
-                soft_update_model1_with_model2(self.q_target_net_list[q_i], self.q_net_list[q_i], self.polyak)
 
     @staticmethod
     def expectile_loss(diff, expectile=0.8):
@@ -339,13 +271,13 @@ class REDQSACAgent(object):
                     q_prediction_list.append(q_prediction)
                 q_prediction_cat = torch.cat(q_prediction_list, dim=1)
                 y_q = y_q.expand((-1, self.num_Q)) if y_q.shape[1] == 1 else y_q
-                q_loss_all = self.expectile_loss(q_prediction_cat - y_q, expectile=0.6).mean() * self.num_Q
+                q_loss_all = self.expectile_loss(q_prediction_cat - y_q, expectile=self.expectile).mean() * self.num_Q
 
                 for q_i in range(self.num_Q):
                     self.q_optimizer_list[q_i].zero_grad()
                 q_loss_all.backward()
 
-                """policy and alpha loss"""
+                """policy loss"""
                 if ((i_update + 1) % self.policy_update_delay == 0) or i_update == num_update - 1:
                     a_tilda, mean_a_tilda, log_std_a_tilda, log_prob_a_tilda, _, pretanh = self.policy_net.forward(
                         obs_tensor)
@@ -358,8 +290,8 @@ class REDQSACAgent(object):
                     ave_q = torch.mean(q_a_tilda_cat, dim=1, keepdim=True)
                     # print(f"SHAPES -> A pi: {self.policy_net.forward(obs_tensor, False, False)[0].shape}, A DB: {acts_tensor.shape}")
                     # input()
-                    policy_loss = (self.alpha * log_prob_a_tilda - ave_q + F.mse_loss(
-                        self.policy_net.forward(obs_tensor, False, False)[0], acts_tensor)).mean()
+                    policy_loss = (self.alpha * log_prob_a_tilda - ave_q).mean()
+                    # + F.mse_loss(self.policy_net.forward(obs_tensor, False, False)[0], acts_tensor)
                     self.policy_optimizer.zero_grad()
                     policy_loss.backward()
                     for sample_idx in range(self.num_Q):
@@ -373,3 +305,9 @@ class REDQSACAgent(object):
 
                 for q_i in range(self.num_Q):
                     soft_update_model1_with_model2(self.q_target_net_list[q_i], self.q_net_list[q_i], self.polyak)
+
+                if i_update == num_update - 1:
+                    wandb.log(
+                        {"policy_loss_offline": policy_loss.cpu().item(),
+                         "mean_loss_q_offline": q_loss_all.cpu().item() / self.num_Q
+                         })

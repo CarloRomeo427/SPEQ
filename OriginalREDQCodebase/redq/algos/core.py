@@ -322,12 +322,12 @@ class TanhNormal(Distribution):
 
     def log_prob(self, value, pre_tanh_value=None):
         """
-        return the log probability of a value
-        :param value: some value, x
+        return the log probability of a value_net
+        :param value: some value_net, x
         :param pre_tanh_value: arctanh(x)
         :return:
         """
-        # use arctanh formula to compute arctanh(value)
+        # use arctanh formula to compute arctanh(value_net)
         if pre_tanh_value is None:
             pre_tanh_value = torch.log(
                 (1+value) / (1-value)
@@ -445,7 +445,7 @@ def soft_update_model1_with_model2(model1, model2, rou):
     for model1_param, model2_param in zip(model1.parameters(), model2.parameters()):
         model1_param.data.copy_(rou*model1_param.data + (1-rou)*model2_param.data)
 
-def test_agent(agent, test_env, max_ep_len, logger, n_eval=1):
+def test_agent(agent, test_env, max_ep_len, logger, n_eval=10):
     """
     This will test the agent's performance by running <n_eval> episodes
     During the runs, the agent should only take deterministic action
@@ -458,6 +458,7 @@ def test_agent(agent, test_env, max_ep_len, logger, n_eval=1):
     :return: test return for each episode as a numpy array
     """
     ep_return_list = np.zeros(n_eval)
+    ep_len_list = np.zeros(n_eval)
     for j in range(n_eval):
         o, r, d, ep_ret, ep_len = test_env.reset(), 0, False, 0, 0
         while not (d or (ep_len == max_ep_len)):
@@ -467,6 +468,7 @@ def test_agent(agent, test_env, max_ep_len, logger, n_eval=1):
             ep_ret += r
             ep_len += 1
         ep_return_list[j] = ep_ret
-        if logger is not None:
-            logger.store(TestEpRet=ep_ret, TestEpLen=ep_len)
+        ep_len_list[j] = ep_len
+    if logger is not None:
+        logger.store(TestEpRet=ep_return_list, TestEpLen=ep_len_list)
     return ep_return_list

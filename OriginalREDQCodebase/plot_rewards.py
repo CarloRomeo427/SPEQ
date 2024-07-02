@@ -3,7 +3,9 @@ import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib
+
 matplotlib.use('WebAgg')
+
 
 def load_progress_files(base_folder, seeds, experiment_name):
     dfs = []
@@ -24,39 +26,44 @@ def load_progress_files(base_folder, seeds, experiment_name):
             print(f"File {file_path} not found.")
     return dfs
 
+
 def compute_common_average(dfs, max_interactions):
     if not dfs:
         return None
-    
+
     # Truncate dataframes to the max_interactions
     truncated_dfs = [df[df['TotalEnvInteracts'] <= max_interactions] for df in dfs]
-    
+
     # Concatenate dataframes and compute the mean and std
     concatenated_df = pd.concat(truncated_dfs).groupby('TotalEnvInteracts').agg(
         AverageEpRet=('AverageEpRet', 'mean'),
         StdEpRet=('AverageEpRet', 'std')
     ).reset_index()
-    
+
     return concatenated_df
+
 
 def plot_with_error_bars(df, alpha=0.3, label=None):
     if df is not None and 'AverageEpRet' in df.columns and 'StdEpRet' in df.columns:
         df['ExpMovingAvg'] = df['AverageEpRet'].ewm(alpha=alpha).mean()
         df['ExpMovingStd'] = df['StdEpRet'].ewm(alpha=alpha).mean()
         plt.plot(df['TotalEnvInteracts'], df['ExpMovingAvg'], label=label)
-        plt.fill_between(df['TotalEnvInteracts'], df['ExpMovingAvg'] - df['ExpMovingStd'], df['ExpMovingAvg'] + df['ExpMovingStd'], alpha=0.2)
+        plt.fill_between(df['TotalEnvInteracts'], df['ExpMovingAvg'] - df['ExpMovingStd'],
+                         df['ExpMovingAvg'] + df['ExpMovingStd'], alpha=0.2)
+
 
 def main():
     base_folder = 'runs/drq/'
     seeds = [0, 42, 1234, 5678, 9876]
 
-    env = 'Humanoid'
+    env = 'Hopper'
 
     # Load and process baseline progress files
     base_experiment_name = f"redq_sac_{env}-v2"
     base_dfs = load_progress_files(base_folder, seeds, base_experiment_name)
-    
+
     # Load and process o2 progress files
+    base_folder = 'runs/drq/'
     o2_experiment_name = f"redq_sac_o3_{env}-v2"
     o2_dfs = load_progress_files(base_folder, seeds, o2_experiment_name)
 
@@ -95,6 +102,7 @@ def main():
     plt.legend()
     plt.grid(True)
     plt.show()
+
 
 if __name__ == "__main__":
     main()
