@@ -18,7 +18,7 @@
     ],
     "layer_norm":	true,
     "logger":	{
-        "<redq.utils.logx.EpochLogger object at 0x7fb29c3815b0>":	{
+        "<redq.utils.logx.EpochLogger object at 0x7f8bdf976580>":	{
             "epoch_dict":	{},
             "exp_name":	"dim15000_Hopper-v2",
             "first_row":	true,

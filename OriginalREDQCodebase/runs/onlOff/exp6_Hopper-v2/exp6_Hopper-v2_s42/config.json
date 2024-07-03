@@ -18,15 +18,15 @@
     ],
     "layer_norm":	true,
     "logger":	{
-        "<redq.utils.logx.EpochLogger object at 0x7fd8ce4c8760>":	{
+        "<redq.utils.logx.EpochLogger object at 0x7ff9b7dee580>":	{
             "epoch_dict":	{},
             "exp_name":	"exp6_Hopper-v2",
             "first_row":	true,
             "log_current_row":	{},
             "log_headers":	[],
-            "output_dir":	"./runs/onlOff/exp6_Hopper-v2/exp6_Hopper-v2_s0",
+            "output_dir":	"./runs/onlOff/exp6_Hopper-v2/exp6_Hopper-v2_s42",
             "output_file":	{
-                "<_io.TextIOWrapper name='./runs/onlOff/exp6_Hopper-v2/exp6_Hopper-v2_s0/progress.txt' mode='w' encoding='UTF-8'>":	{
+                "<_io.TextIOWrapper name='./runs/onlOff/exp6_Hopper-v2/exp6_Hopper-v2_s42/progress.txt' mode='w' encoding='UTF-8'>":	{
                     "mode":	"w"
                 }
             }
@@ -34,7 +34,7 @@
     },
     "logger_kwargs":	{
         "exp_name":	"exp6_Hopper-v2",
-        "output_dir":	"./runs/onlOff/exp6_Hopper-v2/exp6_Hopper-v2_s0"
+        "output_dir":	"./runs/onlOff/exp6_Hopper-v2/exp6_Hopper-v2_s42"
     },
     "lr":	0.0003,
     "max_ep_len":	1000,
@@ -52,7 +52,7 @@
     "q_target_mode":	"min",
     "replay_size":	1000000,
     "reseed_each_epoch":	true,
-    "seed":	0,
+    "seed":	42,
     "start_steps":	5000,
     "steps_per_epoch":	1000,
     "target_drop_rate":	0.0001,
