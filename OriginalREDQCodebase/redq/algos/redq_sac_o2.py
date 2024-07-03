@@ -29,7 +29,7 @@ class REDQSACAgent(object):
                  start_steps=5000, delay_update_steps='auto',
                  utd_ratio=20, num_Q=10, num_min=2, q_target_mode='min',
                  policy_update_delay=20, expectile=0.6,
-                 target_drop_rate=0.0, layer_norm=False):
+                 target_drop_rate=0.0, layer_norm=False, offlineBuffer="prioritized"):
         self.policy_net = TanhGaussianPolicy(obs_dim, act_dim, hidden_sizes, action_limit=act_limit).to(device)
         self.q_net_list, self.q_target_net_list = [], []
         for q_i in range(num_Q):
@@ -77,6 +77,7 @@ class REDQSACAgent(object):
         self.policy_update_delay = policy_update_delay
         self.device = device
         self.expectile = expectile
+        self.offlineBuffer = offlineBuffer
 
     def __get_current_num_data(self):
         return self.replay_buffer.size
@@ -242,26 +243,35 @@ class REDQSACAgent(object):
 
         num_update = 0 if self.__get_current_num_data() <= self.delay_update_steps else self.utd_ratio
 
-        filtered_batches = self.replay_buffer.filter_top_x_transitions(x)
+        if self.offlineBuffer == "prioritized":
 
-        for key in filtered_batches:
-            filtered_batches[key] = np.array(filtered_batches[key])
+            filtered_batches = self.replay_buffer.filter_top_x_transitions(x)
+
+            for key in filtered_batches:
+                filtered_batches[key] = np.array(filtered_batches[key])
 
         for _ in range(epochs):
             for i_update in range(num_update):
 
-                idx_batch = np.random.choice(len(filtered_batches), self.batch_size)
-                obs = filtered_batches['obs1'][idx_batch]
-                obs_next = filtered_batches['obs2'][idx_batch]
-                acts = filtered_batches['acts'][idx_batch]
-                rews = filtered_batches['rews'][idx_batch]
-                done = filtered_batches['done'][idx_batch]
+                if self.offlineBuffer == "prioritized":
+                    idx_batch = np.random.choice(len(filtered_batches), self.batch_size)
+                    obs = filtered_batches['obs1'][idx_batch]
+                    obs_next = filtered_batches['obs2'][idx_batch]
+                    acts = filtered_batches['acts'][idx_batch]
+                    rews = filtered_batches['rews'][idx_batch]
+                    done = filtered_batches['done'][idx_batch]
 
-                obs_tensor = Tensor(obs).to(self.device)
-                obs_next_tensor = Tensor(obs_next).to(self.device)
-                acts_tensor = Tensor(acts).to(self.device)
-                rews_tensor = Tensor(rews).unsqueeze(1).to(self.device)
-                done_tensor = Tensor(done).unsqueeze(1).to(self.device)
+                    obs_tensor = Tensor(obs).to(self.device)
+                    obs_next_tensor = Tensor(obs_next).to(self.device)
+                    acts_tensor = Tensor(acts).to(self.device)
+                    rews_tensor = Tensor(rews).unsqueeze(1).to(self.device)
+                    done_tensor = Tensor(done).unsqueeze(1).to(self.device)
+
+                elif self.offlineBuffer == "full":
+                    obs_tensor, obs_next_tensor, acts_tensor, rews_tensor, done_tensor = self.sample_data(
+                        self.batch_size)
+                else:
+                    raise NotImplementedError
 
                 """Q loss"""
                 y_q, sample_idxs = self.get_redq_q_target_no_grad(obs_next_tensor, rews_tensor, done_tensor)

@@ -63,7 +63,8 @@ def main():
     base_dfs = load_progress_files(base_folder, seeds, base_experiment_name)
 
     # Load and process o2 progress files
-    o2_experiment_name = f"dim15000_{env}-v2"
+    experiment_name = "runPazza"
+    o2_experiment_name = f"{experiment_name}_{env}-v2"
     o2_dfs = load_progress_files(base_folder, seeds, o2_experiment_name)
 
     # Determine the maximum completed interactions for the o2 runs
@@ -93,11 +94,11 @@ def main():
     plt.figure(figsize=(10, 6))
     plot_with_error_bars(base_avg_df, label='Baseline')
     if o2_avg_df is not None:
-        plot_with_error_bars(o2_avg_df, label='o2')
+        plot_with_error_bars(o2_avg_df, label=experiment_name)
 
     plt.xlabel('Total Environment Interactions')
     plt.ylabel('Average Episode Return')
-    plt.title(f'Comparison on {env}')
+    plt.title(f'{experiment_name} on {env}')
     plt.legend()
     plt.grid(True)
     plt.show()

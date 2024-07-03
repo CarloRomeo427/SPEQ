@@ -33,7 +33,7 @@ def redq_sac(env_name, seed=0, epochs='mbpo', steps_per_epoch=1000,
              # TH 20211108
              gpu_id=0, target_drop_rate=0.0, layer_norm=False,
              method="redq", offline_frequency=1000,
-             offline_epochs=100, offline_dimension=5000, expectile=0.6
+             offline_epochs=100, offline_dimension=5000, expectile=0.6, offline_buffer="prioritized"
              ):
     """
     :param env_name: name of the gym environment
@@ -143,7 +143,8 @@ def redq_sac(env_name, seed=0, epochs='mbpo', steps_per_epoch=1000,
                          utd_ratio, num_Q, num_min, q_target_mode,
                          policy_update_delay,
                          target_drop_rate=target_drop_rate,
-                         layer_norm=layer_norm)  # added by TH 20211206 <- bug fix 20211207
+                         layer_norm=layer_norm,
+                         offlineBuffer=offline_buffer)  # added by TH 20211206 <- bug fix 20211207
 
     o, r, d, ep_ret, ep_len = env.reset(), 0, False, 0, 0
 
@@ -247,6 +248,7 @@ if __name__ == '__main__':
     parser.add_argument("-offline_epochs", type=int, default=100, )
     parser.add_argument("-offline_dimension", type=int, default=5000, )
     parser.add_argument("-expectile", type=float, default=0.5, )
+    parser.add_argument("-offline_buffer", type=str, default="prioritized", )
 
     args = parser.parse_args()
 
@@ -272,6 +274,7 @@ if __name__ == '__main__':
             "offline_epochs": args.offline_epochs,
             "offline_dimension": args.offline_dimension,
             "expectile": args.expectile,
+            "offline_buffer": args.offline_buffer,
         })
 
     redq_sac(args.env, seed=args.seed, epochs=args.epochs,
@@ -283,4 +286,4 @@ if __name__ == '__main__':
              expectile=args.expectile,
              offline_frequency=args.offline_frequency,
              offline_epochs=args.offline_epochs, offline_dimension=args.offline_dimension,
-             method=args.method)
+             method=args.method, offline_buffer=args.offline_buffer)
