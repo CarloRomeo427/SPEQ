@@ -53,18 +53,17 @@ def plot_with_error_bars(df, alpha=0.3, label=None):
 
 
 def main():
-    base_folder = 'runs/drq/'
+    base_folder = 'runs/onlOff/'
     seeds = [0, 42, 1234, 5678, 9876]
 
     env = 'Hopper'
 
     # Load and process baseline progress files
-    base_experiment_name = f"redq_sac_{env}-v2"
+    base_experiment_name = f"vanilla_{env}-v2"
     base_dfs = load_progress_files(base_folder, seeds, base_experiment_name)
 
     # Load and process o2 progress files
-    base_folder = 'runs/drq/'
-    o2_experiment_name = f"redq_sac_o3_{env}-v2"
+    o2_experiment_name = f"dim15000_{env}-v2"
     o2_dfs = load_progress_files(base_folder, seeds, o2_experiment_name)
 
     # Determine the maximum completed interactions for the o2 runs
