@@ -1,3 +1,5 @@
+import copy
+
 import numpy as np
 import torch
 from torch import Tensor
@@ -5,7 +7,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 import torch.optim as optim
 from redq.algos.core import TanhGaussianPolicy, Mlp, soft_update_model1_with_model2, ReplayBuffer, \
-    mbpo_target_entropy_dict
+    mbpo_target_entropy_dict, soft_update_policy
 import wandb
 
 
@@ -29,7 +31,8 @@ class REDQSACAgent(object):
                  start_steps=5000, delay_update_steps='auto',
                  utd_ratio=20, num_Q=10, num_min=2, q_target_mode='min',
                  policy_update_delay=20, expectile=0.5,
-                 target_drop_rate=0.0, layer_norm=False, offlineBuffer="prioritized", policy_type='default'):
+                 target_drop_rate=0.0, layer_norm=False, offlineBuffer="prioritized", policy_type='default',
+                 utd_ratio_offline=None, policy_polyak_update=False):
         self.policy_net = TanhGaussianPolicy(obs_dim, act_dim, hidden_sizes, action_limit=act_limit).to(device)
         self.q_net_list, self.q_target_net_list = [], []
         for q_i in range(num_Q):
@@ -79,6 +82,8 @@ class REDQSACAgent(object):
         self.expectile = expectile
         self.offlineBuffer = offlineBuffer
         self.policy_type = policy_type
+        self.policy_polyak_update = policy_polyak_update
+        self.utd_ratio_offline = utd_ratio_offline if utd_ratio_offline else utd_ratio
 
     def __get_current_num_data(self):
         return self.replay_buffer.size
@@ -242,7 +247,7 @@ class REDQSACAgent(object):
     def finetune_offline(self, epochs, x):
         """ Finetune the model on the top x% of the data """
 
-        num_update = 0 if self.__get_current_num_data() <= self.delay_update_steps else self.utd_ratio
+        num_update = 0 if self.__get_current_num_data() <= self.delay_update_steps else self.utd_ratio_offline
 
         if self.offlineBuffer == "prioritized":
 
@@ -253,6 +258,8 @@ class REDQSACAgent(object):
 
         for _ in range(epochs):
             for i_update in range(num_update):
+                if self.policy_polyak_update:
+                    self.target_policy_net = copy.deepcopy(self.policy_net)
 
                 if self.offlineBuffer == "prioritized":
                     idx_batch = np.random.choice(len(filtered_batches), self.batch_size)
@@ -289,7 +296,8 @@ class REDQSACAgent(object):
                 q_loss_all.backward()
 
                 """policy loss"""
-                if (((i_update + 1) % self.policy_update_delay == 0) or i_update == num_update - 1) and self.policy_type != 'none':
+                if (((
+                             i_update + 1) % self.utd_ratio_offline == 0) or i_update == num_update - 1) and self.policy_type != 'None':
                     a_tilda, mean_a_tilda, log_std_a_tilda, log_prob_a_tilda, _, pretanh = self.policy_net.forward(
                         obs_tensor)
                     q_a_tilda_list = []
@@ -304,9 +312,11 @@ class REDQSACAgent(object):
                     if self.policy_type == 'default':
                         policy_loss = (self.alpha * log_prob_a_tilda - ave_q).mean()
                     elif self.policy_type == 'bc':
-                        policy_loss = (self.alpha * log_prob_a_tilda - ave_q).mean() + 0.5 * F.mse_loss(a_tilda, acts_tensor)
-                    
-                        
+                        policy_loss = (self.alpha * log_prob_a_tilda - ave_q).mean() + 0.5 * F.mse_loss(a_tilda,
+                                                                                                        acts_tensor)
+                    else:
+                        raise NotImplementedError
+
                     # + F.mse_loss(self.policy_net.forward(obs_tensor, False, False)[0], acts_tensor)
                     self.policy_optimizer.zero_grad()
                     policy_loss.backward()
@@ -316,14 +326,20 @@ class REDQSACAgent(object):
                 for q_i in range(self.num_Q):
                     self.q_optimizer_list[q_i].step()
 
-                if (((i_update + 1) % self.policy_update_delay == 0) or i_update == num_update - 1) and self.policy_type != 'none':
+                if (((
+                             i_update + 1) % self.utd_ratio_offline == 0) or i_update == num_update - 1) and self.policy_type != 'None':
                     self.policy_optimizer.step()
 
                 for q_i in range(self.num_Q):
                     soft_update_model1_with_model2(self.q_target_net_list[q_i], self.q_net_list[q_i], self.polyak)
 
-                if i_update == num_update - 1:
-                    wandb.log(
-                        {"policy_loss_offline": policy_loss.cpu().item(),
-                         "mean_loss_q_offline": q_loss_all.cpu().item() / self.num_Q
-                         })
+
+                if self.policy_polyak_update:
+                    soft_update_policy(self.target_policy_net, self.policy_net, self.polyak)
+                    # model2_param.data.copy_(rou*model1_param.data + (1-rou)*model2_param.data)
+
+                    if i_update == num_update - 1:
+                        wandb.log(
+                            {"policy_loss_offline": policy_loss.cpu().item(),
+                             "mean_loss_q_offline": q_loss_all.cpu().item() / self.num_Q
+                             })

@@ -445,6 +445,17 @@ def soft_update_model1_with_model2(model1, model2, rou):
     for model1_param, model2_param in zip(model1.parameters(), model2.parameters()):
         model1_param.data.copy_(rou*model1_param.data + (1-rou)*model2_param.data)
 
+def soft_update_policy(model1, model2, rou):
+    """
+    used to polyak update a target network
+    :param model1: a pytorch model
+    :param model2: a pytorch model of the same class
+    :param rou: the update is model1 <- rou*model1 + (1-rou)model2
+    """
+    for model1_param, model2_param in zip(model1.parameters(), model2.parameters()):
+        model2_param.data.copy_(rou*model1_param.data + (1-rou)*model2_param.data)
+
+
 def test_agent(agent, test_env, max_ep_len, logger, n_eval=10):
     """
     This will test the agent's performance by running <n_eval> episodes
