@@ -50,6 +50,9 @@ def plot_with_error_bars(df, alpha=0.3, label=None):
         plt.plot(df['TotalEnvInteracts'], df['ExpMovingAvg'], label=label)
         plt.fill_between(df['TotalEnvInteracts'], df['ExpMovingAvg'] - df['ExpMovingStd'],
                          df['ExpMovingAvg'] + df['ExpMovingStd'], alpha=0.2)
+        # plt.plot(df['TotalEnvInteracts'], df['AverageEpRet'], label=label)
+        # plt.fill_between(df['TotalEnvInteracts'], df['AverageEpRet'] - df['StdEpRet'],
+        #                  df['AverageEpRet'] + df['StdEpRet'], alpha=0.2)
 
 
 def main():
@@ -63,7 +66,7 @@ def main():
     base_dfs = load_progress_files(base_folder, seeds, base_experiment_name)
 
     # Load and process o2 progress files
-    experiment_name = "runPazza"
+    experiment_name = "exp6"
     o2_experiment_name = f"{experiment_name}_{env}-v2"
     o2_dfs = load_progress_files(base_folder, seeds, o2_experiment_name)
 

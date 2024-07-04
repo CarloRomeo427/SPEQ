@@ -28,7 +28,7 @@ class REDQSACAgent(object):
                  alpha=0.2, auto_alpha=True, target_entropy='mbpo',
                  start_steps=5000, delay_update_steps='auto',
                  utd_ratio=20, num_Q=10, num_min=2, q_target_mode='min',
-                 policy_update_delay=20, expectile=0.6,
+                 policy_update_delay=20, expectile=0.5,
                  target_drop_rate=0.0, layer_norm=False, offlineBuffer="prioritized"):
         self.policy_net = TanhGaussianPolicy(obs_dim, act_dim, hidden_sizes, action_limit=act_limit).to(device)
         self.q_net_list, self.q_target_net_list = [], []

@@ -143,7 +143,7 @@ def redq_sac(env_name, seed=0, epochs='mbpo', steps_per_epoch=1000,
                          utd_ratio, num_Q, num_min, q_target_mode,
                          policy_update_delay,
                          target_drop_rate=target_drop_rate,
-                         layer_norm=layer_norm,
+                         layer_norm=layer_norm, expectile=expectile,
                          offlineBuffer=offline_buffer)  # added by TH 20211206 <- bug fix 20211207
 
     o, r, d, ep_ret, ep_len = env.reset(), 0, False, 0, 0
