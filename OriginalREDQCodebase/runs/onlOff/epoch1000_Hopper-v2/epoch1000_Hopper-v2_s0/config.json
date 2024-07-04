@@ -1,0 +1,62 @@
+{
+    "alpha":	0.2,
+    "auto_alpha":	true,
+    "batch_size":	256,
+    "debug":	false,
+    "delay_update_steps":	"auto",
+    "device":	"cuda:0",
+    "env_name":	"Hopper-v2",
+    "epochs":	100,
+    "evaluate_bias":	false,
+    "exp_name":	"epoch1000_Hopper-v2",
+    "expectile":	0.5,
+    "gamma":	0.99,
+    "gpu_id":	0,
+    "hidden_sizes":	[
+        256,
+        256
+    ],
+    "layer_norm":	true,
+    "logger":	{
+        "<redq.utils.logx.EpochLogger object at 0x7f45a5eba580>":	{
+            "epoch_dict":	{},
+            "exp_name":	"epoch1000_Hopper-v2",
+            "first_row":	true,
+            "log_current_row":	{},
+            "log_headers":	[],
+            "output_dir":	"./runs/onlOff/epoch1000_Hopper-v2/epoch1000_Hopper-v2_s0",
+            "output_file":	{
+                "<_io.TextIOWrapper name='./runs/onlOff/epoch1000_Hopper-v2/epoch1000_Hopper-v2_s0/progress.txt' mode='w' encoding='UTF-8'>":	{
+                    "mode":	"w"
+                }
+            }
+        }
+    },
+    "logger_kwargs":	{
+        "exp_name":	"epoch1000_Hopper-v2",
+        "output_dir":	"./runs/onlOff/epoch1000_Hopper-v2/epoch1000_Hopper-v2_s0"
+    },
+    "lr":	0.0003,
+    "max_ep_len":	1000,
+    "method":	"sac",
+    "n_evals_per_epoch":	1,
+    "n_mc_cutoff":	350,
+    "n_mc_eval":	1000,
+    "num_Q":	2,
+    "num_min":	2,
+    "offline_dimension":	5000,
+    "offline_epochs":	1000,
+    "offline_frequency":	1000,
+    "policy_update_delay":	20,
+    "polyak":	0.995,
+    "q_target_mode":	"min",
+    "replay_size":	1000000,
+    "reseed_each_epoch":	true,
+    "seed":	0,
+    "start_steps":	5000,
+    "steps_per_epoch":	1000,
+    "target_drop_rate":	0.0001,
+    "target_entropy":	"mbpo",
+    "total_steps":	100001,
+    "utd_ratio":	20
+}
