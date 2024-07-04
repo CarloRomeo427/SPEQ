@@ -85,6 +85,7 @@ class REDQSACAgent(object):
         self.policy_polyak_update = policy_polyak_update
         self.utd_ratio_offline = utd_ratio_offline if utd_ratio_offline else utd_ratio
 
+
     def __get_current_num_data(self):
         return self.replay_buffer.size
 
@@ -332,7 +333,6 @@ class REDQSACAgent(object):
 
                 for q_i in range(self.num_Q):
                     soft_update_model1_with_model2(self.q_target_net_list[q_i], self.q_net_list[q_i], self.polyak)
-
 
                 if self.policy_polyak_update:
                     soft_update_policy(self.target_policy_net, self.policy_net, self.polyak)

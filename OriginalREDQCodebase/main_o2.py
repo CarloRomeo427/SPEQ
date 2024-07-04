@@ -16,6 +16,16 @@ from redq.utils.logx import EpochLogger
 import customenvs
 
 customenvs.register_mbpo_environments()
+def print_class_attributes(obj):
+    """
+    Prints all attributes of an object along with their values.
+
+    Parameters:
+    obj (object): The object whose attributes need to be printed.
+    """
+    attributes = vars(obj)
+    for attr, value in attributes.items():
+        print(f"{attr}: {value}")
 
 
 def redq_sac(env_name, seed=0, epochs='mbpo', steps_per_epoch=1000,
@@ -150,6 +160,8 @@ def redq_sac(env_name, seed=0, epochs='mbpo', steps_per_epoch=1000,
                          utd_ratio_offline=utd_ratio_offline, policy_polyak_update=policy_polyak_update)
     # added by TH 20211206 <- bug fix 20211207
 
+    print_class_attributes(agent)
+
     o, r, d, ep_ret, ep_len = env.reset(), 0, False, 0, 0
 
     for t in range(total_steps):
@@ -255,7 +267,7 @@ if __name__ == '__main__':
     parser.add_argument("-offline_buffer", type=str, default="prioritized", )
     parser.add_argument("-policy_type", type=str, default="default", )
     parser.add_argument("-utd_ratio_offline", type=int, default=0, )
-    parser.add_argument("-policy_polyak_update", type=bool, default=False, action='store_true')
+    parser.add_argument("-policy_polyak_update",  default=False, action='store_true')
 
     args = parser.parse_args()
 
@@ -283,7 +295,7 @@ if __name__ == '__main__':
             "expectile": args.expectile,
             "offline_buffer": args.offline_buffer,
             "policy_type": args.policy_type,
-            "utd_ratio_offline": args.utp_ratio_offline,
+            "utd_ratio_offline": args.utd_ratio_offline,
             "policy_polyak_update": args.policy_polyak_update,
         })
 
@@ -297,4 +309,4 @@ if __name__ == '__main__':
              offline_frequency=args.offline_frequency,
              offline_epochs=args.offline_epochs, offline_dimension=args.offline_dimension,
              method=args.method, offline_buffer=args.offline_buffer, policy_type=args.policy_type,
-             utd_ratio_offline=args.utp_ratio_offline, policy_polyak_update=args.policy_polyak_update)
+             utd_ratio_offline=args.utd_ratio_offline, policy_polyak_update=args.policy_polyak_update)
