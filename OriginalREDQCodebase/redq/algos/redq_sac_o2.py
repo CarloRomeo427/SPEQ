@@ -29,7 +29,7 @@ class REDQSACAgent(object):
                  start_steps=5000, delay_update_steps='auto',
                  utd_ratio=20, num_Q=10, num_min=2, q_target_mode='min',
                  policy_update_delay=20, expectile=0.5,
-                 target_drop_rate=0.0, layer_norm=False, offlineBuffer="prioritized"):
+                 target_drop_rate=0.0, layer_norm=False, offlineBuffer="prioritized", policy_type='default'):
         self.policy_net = TanhGaussianPolicy(obs_dim, act_dim, hidden_sizes, action_limit=act_limit).to(device)
         self.q_net_list, self.q_target_net_list = [], []
         for q_i in range(num_Q):
@@ -78,6 +78,7 @@ class REDQSACAgent(object):
         self.device = device
         self.expectile = expectile
         self.offlineBuffer = offlineBuffer
+        self.policy_type = policy_type
 
     def __get_current_num_data(self):
         return self.replay_buffer.size
@@ -288,7 +289,7 @@ class REDQSACAgent(object):
                 q_loss_all.backward()
 
                 """policy loss"""
-                if ((i_update + 1) % self.policy_update_delay == 0) or i_update == num_update - 1:
+                if (((i_update + 1) % self.policy_update_delay == 0) or i_update == num_update - 1) and self.policy_type != 'none':
                     a_tilda, mean_a_tilda, log_std_a_tilda, log_prob_a_tilda, _, pretanh = self.policy_net.forward(
                         obs_tensor)
                     q_a_tilda_list = []
@@ -300,7 +301,12 @@ class REDQSACAgent(object):
                     ave_q = torch.mean(q_a_tilda_cat, dim=1, keepdim=True)
                     # print(f"SHAPES -> A pi: {self.policy_net.forward(obs_tensor, False, False)[0].shape}, A DB: {acts_tensor.shape}")
                     # input()
-                    policy_loss = (self.alpha * log_prob_a_tilda - ave_q).mean()
+                    if self.policy_type == 'default':
+                        policy_loss = (self.alpha * log_prob_a_tilda - ave_q).mean()
+                    elif self.policy_type == 'bc':
+                        policy_loss = (self.alpha * log_prob_a_tilda - ave_q).mean() + 0.5 * F.mse_loss(a_tilda, acts_tensor)
+                    
+                        
                     # + F.mse_loss(self.policy_net.forward(obs_tensor, False, False)[0], acts_tensor)
                     self.policy_optimizer.zero_grad()
                     policy_loss.backward()
@@ -310,7 +316,7 @@ class REDQSACAgent(object):
                 for q_i in range(self.num_Q):
                     self.q_optimizer_list[q_i].step()
 
-                if ((i_update + 1) % self.policy_update_delay == 0) or i_update == num_update - 1:
+                if (((i_update + 1) % self.policy_update_delay == 0) or i_update == num_update - 1) and self.policy_type != 'none':
                     self.policy_optimizer.step()
 
                 for q_i in range(self.num_Q):
