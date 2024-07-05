@@ -2,7 +2,7 @@
 for env in 'Hopper'; do
     for seed in 0 42 1234 5678 9876; do
         python main_o2.py -info onlOff -env $env-v2 -seed $seed -epochs 100 -gpu_id 0 -method sac -layer_norm 1 \
-          -target_drop_rate 0.0001 -exp_name noutdnopolicy -offline_frequency 1000 -offline_epochs 100 -offline_dimension 10000 -expectile 0.7 \
+          -target_drop_rate 0.0001 -exp_name noutdnopolicy_07rb10k -offline_frequency 1000 -offline_epochs 100 -offline_dimension 10000 -expectile 0.7 \
           -utd_ratio_offline 1 -policy_type None
     done  
 done
