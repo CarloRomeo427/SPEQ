@@ -66,7 +66,7 @@ def main():
     base_dfs = load_progress_files(base_folder, seeds, base_experiment_name)
 
     # Load and process o2 progress files
-    experiment_name = "exp6"
+    experiment_name = "noutdnopolicy"
     o2_experiment_name = f"{experiment_name}_{env}-v2"
     o2_dfs = load_progress_files(base_folder, seeds, o2_experiment_name)
 
@@ -102,7 +102,7 @@ def main():
     plt.xlabel('Total Environment Interactions')
     plt.ylabel('Average Episode Return')
     plt.title(f'{experiment_name} on {env}')
-    plt.legend()
+    plt.legend(loc='upper left')
     plt.grid(True)
     plt.show()
 

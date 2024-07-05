@@ -85,7 +85,6 @@ class REDQSACAgent(object):
         self.policy_polyak_update = policy_polyak_update
         self.utd_ratio_offline = utd_ratio_offline if utd_ratio_offline else utd_ratio
 
-
     def __get_current_num_data(self):
         return self.replay_buffer.size
 
@@ -253,16 +252,21 @@ class REDQSACAgent(object):
         if self.offlineBuffer == "prioritized":
 
             filtered_batches = self.replay_buffer.filter_top_x_transitions(x)
-
             for key in filtered_batches:
                 filtered_batches[key] = np.array(filtered_batches[key])
+
+        elif self.offlineBuffer == "random":
+            filtered_batches = self.replay_buffer.filter_top_x_transitions(x)
+            for key in filtered_batches:
+                filtered_batches[key] = np.array(filtered_batches[key])
+
 
         for _ in range(epochs):
             for i_update in range(num_update):
                 if self.policy_polyak_update:
                     self.target_policy_net = copy.deepcopy(self.policy_net)
 
-                if self.offlineBuffer == "prioritized":
+                if self.offlineBuffer == "prioritized" or self.offlineBuffer == "random":
                     idx_batch = np.random.choice(len(filtered_batches), self.batch_size)
                     obs = filtered_batches['obs1'][idx_batch]
                     obs_next = filtered_batches['obs2'][idx_batch]

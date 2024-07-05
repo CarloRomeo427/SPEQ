@@ -1,21 +1,26 @@
+from random import random, sample
+
 import numpy as np
 import torch
 import torch.nn as nn
 from torch.nn import functional as F
 from torch.distributions import Distribution, Normal
+
 # following SAC authors' and OpenAI implementation
 LOG_SIG_MAX = 2
 LOG_SIG_MIN = -20
 ACTION_BOUND_EPSILON = 1E-6
 # these numbers are from the MBPO paper
-mbpo_target_entropy_dict = {'Hopper-v2':-1, 'HalfCheetah-v2':-3, 'Walker2d-v2':-3, 'Ant-v2':-4, 'Humanoid-v2':-2}
-mbpo_epoches = {'Hopper-v2':125, 'Walker2d-v2':300, 'Ant-v2':300, 'HalfCheetah-v2':400, 'Humanoid-v2':300}
+mbpo_target_entropy_dict = {'Hopper-v2': -1, 'HalfCheetah-v2': -3, 'Walker2d-v2': -3, 'Ant-v2': -4, 'Humanoid-v2': -2}
+mbpo_epoches = {'Hopper-v2': 125, 'Walker2d-v2': 300, 'Ant-v2': 300, 'HalfCheetah-v2': 400, 'Humanoid-v2': 300}
+
 
 def weights_init_(m):
     # weight init helper function
     if isinstance(m, nn.Linear):
         torch.nn.init.xavier_uniform_(m.weight, gain=1)
         torch.nn.init.constant_(m.bias, 0)
+
 
 # class ReplayBuffer:
 #     """
@@ -68,6 +73,7 @@ class ReplayBuffer:
     """
     A simple FIFO experience replay buffer
     """
+
     def __init__(self, obs_dim, act_dim, size):
         """
         :param obs_dim: size of observation
@@ -96,10 +102,10 @@ class ReplayBuffer:
         self.episode_ids[self.ptr] = self.current_episode_id
 
         ## move the pointer to store in next location in buffer
-        self.ptr = (self.ptr+1) % self.max_size
+        self.ptr = (self.ptr + 1) % self.max_size
         ## keep track of the current buffer size
-        self.size = min(self.size+1, self.max_size)
-        
+        self.size = min(self.size + 1, self.max_size)
+
         if done:
             self.current_episode_id += 1
 
@@ -132,7 +138,7 @@ class ReplayBuffer:
                     done=self.done_buf[idxs],
                     episode_ids=self.episode_ids[idxs],
                     idxs=idxs)
-    
+
     def sample_all(self):
         """
         Sample all transitions in the buffer.
@@ -144,12 +150,12 @@ class ReplayBuffer:
                     rews=self.rews_buf[:self.size],
                     done=self.done_buf[:self.size],
                     episode_ids=self.episode_ids[:self.size])
-    
+
     def filter_top_x_percent(self, x=0.5):
-        
+
         all_batches = self.sample_all()
         episode_rewards = {}
-        
+
         for i in range(len(all_batches['obs1'])):
             episode_id = all_batches['episode_ids'][i]
             reward = all_batches['rews'][i]
@@ -161,13 +167,13 @@ class ReplayBuffer:
         top_x_percent_episodes = [item[0] for item in sorted_episodes[:int(len(sorted_episodes) * x)]]
 
         filtered_batches = {
-        'obs1': [],
-        'obs2': [],
-        'acts': [],
-        'rews': [],
-        'done': [],
-        'episode_ids': []
-    }
+            'obs1': [],
+            'obs2': [],
+            'acts': [],
+            'rews': [],
+            'done': [],
+            'episode_ids': []
+        }
 
         for i in range(len(all_batches['obs1'])):
             episode_id = all_batches['episode_ids'][i]
@@ -190,13 +196,12 @@ class ReplayBuffer:
                     done=filtered_batches['done'],
                     episode_ids=filtered_batches['episode_ids'])
 
-        
     def filter_top_x_transitions(self, x=5000):
         """Filter the top x transitions based on episode rewards"""
-        
+
         all_batches = self.sample_all()
         episode_rewards = {}
-        
+
         # Aggregate rewards for each episode
         for i in range(len(all_batches['obs1'])):
             episode_id = all_batches['episode_ids'][i]
@@ -242,10 +247,30 @@ class ReplayBuffer:
                     done=filtered_batches['done'],
                     episode_ids=filtered_batches['episode_ids'])
 
+    def random_x_transitions(self, x=5000):
+        """Filter the top x transitions based on episode rewards"""
 
+        all_batches = self.sample_all()
+        sample_indices = sample(range(len(all_batches['obs1'])), x)
 
+        filtered_batches = {
+            'obs1': [],
+            'obs2': [],
+            'acts': [],
+            'rews': [],
+            'done': [],
+            'episode_ids': []
+        }
 
+        for key in filtered_batches.keys():
+            filtered_batches[key] = [all_batches[key][i] for i in sample_indices]
 
+        return dict(obs1=filtered_batches['obs1'],
+                    obs2=filtered_batches['obs2'],
+                    acts=filtered_batches['acts'],
+                    rews=filtered_batches['rews'],
+                    done=filtered_batches['done'],
+                    episode_ids=filtered_batches['episode_ids'])
 
 
 class Mlp(nn.Module):
@@ -256,7 +281,7 @@ class Mlp(nn.Module):
             hidden_sizes,
             hidden_activation=F.relu,
             #
-            target_drop_rate = 0.0, layer_norm = False
+            target_drop_rate=0.0, layer_norm=False
 
     ):
         super().__init__()
@@ -296,11 +321,12 @@ class Mlp(nn.Module):
         h = input
         for i, fc_layer in enumerate(self.hidden_layers):
             h = fc_layer(h)
-            #h = self.hidden_activation(h)
-            if ( (i + 1) % self.apply_activation_per) == 0:
+            # h = self.hidden_activation(h)
+            if ((i + 1) % self.apply_activation_per) == 0:
                 h = self.hidden_activation(h)
         output = self.last_fc_layer(h)
         return output
+
 
 class TanhNormal(Distribution):
     """
@@ -309,6 +335,7 @@ class TanhNormal(Distribution):
         Z ~ N(mean, std)
     Note: this is not very numerically stable.
     """
+
     def __init__(self, normal_mean, normal_std, epsilon=1e-6):
         """
         :param normal_mean: Mean of the normal distribution
@@ -330,10 +357,10 @@ class TanhNormal(Distribution):
         # use arctanh formula to compute arctanh(value_net)
         if pre_tanh_value is None:
             pre_tanh_value = torch.log(
-                (1+value) / (1-value)
+                (1 + value) / (1 - value)
             ) / 2
         return self.normal.log_prob(pre_tanh_value) - \
-               torch.log(1 - value * value + self.epsilon)
+            torch.log(1 - value * value + self.epsilon)
 
     def sample(self, return_pretanh_value=False):
         """
@@ -355,22 +382,24 @@ class TanhNormal(Distribution):
         z here is mu+sigma+eksee
         """
         z = (
-            self.normal_mean +
-            self.normal_std *
-            Normal( ## this part is eksee~N(0,1)
-                torch.zeros(self.normal_mean.size()),
-                torch.ones(self.normal_std.size())
-            ).sample()
+                self.normal_mean +
+                self.normal_std *
+                Normal(  ## this part is eksee~N(0,1)
+                    torch.zeros(self.normal_mean.size()),
+                    torch.ones(self.normal_std.size())
+                ).sample()
         )
         if return_pretanh_value:
             return torch.tanh(z), z
         else:
             return torch.tanh(z)
 
+
 class TanhGaussianPolicy(Mlp):
     """
     A Gaussian policy network with Tanh to enforce action limits
     """
+
     def __init__(
             self,
             obs_dim,
@@ -435,6 +464,7 @@ class TanhGaussianPolicy(Mlp):
             action * self.action_limit, mean, log_std, log_prob, std, pre_tanh_value,
         )
 
+
 def soft_update_model1_with_model2(model1, model2, rou):
     """
     used to polyak update a target network
@@ -443,7 +473,8 @@ def soft_update_model1_with_model2(model1, model2, rou):
     :param rou: the update is model1 <- rou*model1 + (1-rou)model2
     """
     for model1_param, model2_param in zip(model1.parameters(), model2.parameters()):
-        model1_param.data.copy_(rou*model1_param.data + (1-rou)*model2_param.data)
+        model1_param.data.copy_(rou * model1_param.data + (1 - rou) * model2_param.data)
+
 
 def soft_update_policy(model1, model2, rou):
     """
@@ -453,7 +484,7 @@ def soft_update_policy(model1, model2, rou):
     :param rou: the update is model1 <- rou*model1 + (1-rou)model2
     """
     for model1_param, model2_param in zip(model1.parameters(), model2.parameters()):
-        model2_param.data.copy_(rou*model1_param.data + (1-rou)*model2_param.data)
+        model2_param.data.copy_(rou * model1_param.data + (1 - rou) * model2_param.data)
 
 
 def test_agent(agent, test_env, max_ep_len, logger, n_eval=10):
