@@ -256,7 +256,7 @@ class REDQSACAgent(object):
                 filtered_batches[key] = np.array(filtered_batches[key])
 
         elif self.offlineBuffer == "random":
-            filtered_batches = self.replay_buffer.filter_top_x_transitions(x)
+            filtered_batches = self.replay_buffer.filter_top_x_percent(x)
             for key in filtered_batches:
                 filtered_batches[key] = np.array(filtered_batches[key])
 
