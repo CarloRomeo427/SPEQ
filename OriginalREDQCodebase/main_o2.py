@@ -16,6 +16,8 @@ from redq.utils.logx import EpochLogger
 import customenvs
 
 customenvs.register_mbpo_environments()
+
+
 def print_class_attributes(obj):
     """
     Prints all attributes of an object along with their values.
@@ -266,8 +268,10 @@ if __name__ == '__main__':
     parser.add_argument("-expectile", type=float, default=0.5, )
     parser.add_argument("-offline_buffer", type=str, default="prioritized", )
     parser.add_argument("-policy_type", type=str, default="default", )
-    parser.add_argument("-utd_ratio_offline", type=int, default=0, )
-    parser.add_argument("-policy_polyak_update",  default=False, action='store_true')
+    parser.add_argument("-utd_ratio_online", type=int, default=20, )
+    parser.add_argument("-utd_ratio_offline", type=int, default=1, )
+    parser.add_argument("-network_width", type=int, default=256, )
+    parser.add_argument("-policy_polyak_update", default=False, action='store_true')
 
     args = parser.parse_args()
 
@@ -280,6 +284,8 @@ if __name__ == '__main__':
     # specify experiment name, seed and data_dir.
     # for example, for seed 0, the progress.txt will be saved under data_dir/exp_name/exp_name_s0
     logger_kwargs = setup_logger_kwargs(exp_name_full, args.seed, args.data_dir)
+
+    hidden_sizes = (args.network_width, args.network_width)
 
     wandb.init(
         # set the wandb project where this run will be logged
@@ -297,6 +303,8 @@ if __name__ == '__main__':
             "policy_type": args.policy_type,
             "utd_ratio_offline": args.utd_ratio_offline,
             "policy_polyak_update": args.policy_polyak_update,
+            "utd_ratio_online": args.utd_ratio_online,
+            "network_width": args.network_width,
         })
 
     redq_sac(args.env, seed=args.seed, epochs=args.epochs,
@@ -309,4 +317,5 @@ if __name__ == '__main__':
              offline_frequency=args.offline_frequency,
              offline_epochs=args.offline_epochs, offline_dimension=args.offline_dimension,
              method=args.method, offline_buffer=args.offline_buffer, policy_type=args.policy_type,
-             utd_ratio_offline=args.utd_ratio_offline, policy_polyak_update=args.policy_polyak_update)
+             utd_ratio_offline=args.utd_ratio_offline, policy_polyak_update=args.policy_polyak_update,
+             utd_ratio=args.utd_ratio_online, hidden_sizes=hidden_sizes)
