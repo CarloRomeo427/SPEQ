@@ -292,6 +292,7 @@ if __name__ == '__main__':
         name=f'{exp_name_full}',
         project="lomo",
         group=args.env,
+        entity="girolamomacaluso",
         # track hyperparameters and run metadata
         config={
             "seed": args.seed,
