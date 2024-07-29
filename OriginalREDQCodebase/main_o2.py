@@ -266,8 +266,8 @@ if __name__ == '__main__':
     parser.add_argument("-offline_epochs", type=int, default=100, )
     parser.add_argument("-offline_dimension", type=int, default=5000, )
     parser.add_argument("-expectile", type=float, default=0.5, )
-    parser.add_argument("-offline_buffer", type=str, default="prioritized", )
-    parser.add_argument("-policy_type", type=str, default="default", )
+    parser.add_argument("-offline_buffer", type=str, default="full", )
+    parser.add_argument("-policy_type", type=str, default="None", )
     parser.add_argument("-utd_ratio_online", type=int, default=20, )
     parser.add_argument("-utd_ratio_offline", type=int, default=1, )
     parser.add_argument("-network_width", type=int, default=256, )
@@ -290,7 +290,7 @@ if __name__ == '__main__':
     wandb.init(
         # set the wandb project where this run will be logged
         name=f'{exp_name_full}',
-        project="SAC_Onl+Off",
+        project="lomo",
         group=args.env,
         # track hyperparameters and run metadata
         config={

@@ -33,7 +33,7 @@ class REDQSACAgent(object):
                  policy_update_delay=20, expectile=0.5,
                  target_drop_rate=0.0, layer_norm=False, offlineBuffer="prioritized", policy_type='default',
                  utd_ratio_offline=None, policy_polyak_update=False):
-        self.policy_net = TanhGaussianPolicy(obs_dim, act_dim, hidden_sizes, action_limit=act_limit).to(device)
+        self.policy_net = TanhGaussianPolicy(obs_dim, act_dim, (256, 256), action_limit=act_limit).to(device)
         self.q_net_list, self.q_target_net_list = [], []
         for q_i in range(num_Q):
             new_q_net = Mlp(obs_dim + act_dim, 1, hidden_sizes, target_drop_rate=target_drop_rate,
@@ -259,7 +259,6 @@ class REDQSACAgent(object):
             filtered_batches = self.replay_buffer.filter_top_x_percent(x)
             for key in filtered_batches:
                 filtered_batches[key] = np.array(filtered_batches[key])
-
 
         for _ in range(epochs):
             for i_update in range(num_update):
