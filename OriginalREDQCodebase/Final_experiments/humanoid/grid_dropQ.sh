@@ -11,7 +11,7 @@ for env in 'Humanoid'; do
                 exp_name="${freq_str}_${epochs_str}_dropq"
 
                 # Run the training script
-               python main_o2.py -info lomo/$env/ -env $env-v2 -seed $seed -epochs 100 -gpu_id 0 -method sac -layer_norm 1 \
+               python main_o2.py -info lomo/$env/ -env $env-v2 -seed $seed -epochs 300 -gpu_id 0 -method sac -layer_norm 1 \
               -target_drop_rate 0.1 -exp_name $exp_name -offline_frequency $freq -offline_epochs $epochs  -expectile 0.5 -utd_ratio_online 1
             done
         done

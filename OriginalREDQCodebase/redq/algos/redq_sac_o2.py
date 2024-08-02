@@ -32,7 +32,7 @@ class REDQSACAgent(object):
                  utd_ratio=20, num_Q=10, num_min=2, q_target_mode='min',
                  policy_update_delay=20, expectile=0.5,
                  target_drop_rate=0.0, layer_norm=False, offlineBuffer="prioritized", policy_type='default',
-                 utd_ratio_offline=None, policy_polyak_update=False):
+                 utd_ratio_offline=None, policy_polyak_update=False, reset_q=False):
         self.policy_net = TanhGaussianPolicy(obs_dim, act_dim, (256, 256), action_limit=act_limit).to(device)
         self.q_net_list, self.q_target_net_list = [], []
         for q_i in range(num_Q):
@@ -84,6 +84,9 @@ class REDQSACAgent(object):
         self.policy_type = policy_type
         self.policy_polyak_update = policy_polyak_update
         self.utd_ratio_offline = utd_ratio_offline if utd_ratio_offline else utd_ratio
+        self.reset_q = reset_q
+        self.target_drop_rate = target_drop_rate
+        self.layer_norm = layer_norm
 
     def __get_current_num_data(self):
         return self.replay_buffer.size
@@ -248,6 +251,19 @@ class REDQSACAgent(object):
         """ Finetune the model on the top x% of the data """
 
         num_update = 0 if self.__get_current_num_data() <= self.delay_update_steps else self.utd_ratio_offline
+
+        if self.reset_q:
+            self.q_net_list, self.q_target_net_list = [], []
+            for q_i in range(self.num_Q):
+                new_q_net = Mlp(self.obs_dim + self.act_dim, 1, self.hidden_sizes, target_drop_rate=self.target_drop_rate,
+                                layer_norm=self.layer_norm).to(self.device)
+                self.q_net_list.append(new_q_net)
+                new_q_target_net = Mlp(self.obs_dim + self.act_dim, 1, self.hidden_sizes, target_drop_rate=self.target_drop_rate,
+                                       layer_norm=self.layer_norm).to(self.device)
+                new_q_target_net.load_state_dict(new_q_net.state_dict())
+                self.q_target_net_list.append(new_q_target_net)
+
+            self.q_optimizer_list = [optim.Adam(q.parameters(), lr=self.lr) for q in self.q_net_list]
 
         if self.offlineBuffer == "prioritized":
 

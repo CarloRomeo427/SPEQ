@@ -47,7 +47,7 @@ def redq_sac(env_name, seed=0, epochs='mbpo', steps_per_epoch=1000,
              method="redq", offline_frequency=1000,
              offline_epochs=100, offline_dimension=5000, expectile=0.6, offline_buffer="prioritized",
              policy_type='default',
-             utd_ratio_offline=None, policy_polyak_update=False
+             utd_ratio_offline=None, policy_polyak_update=False, reset_q=False
              ):
     """
     :param env_name: name of the gym environment
@@ -159,7 +159,7 @@ def redq_sac(env_name, seed=0, epochs='mbpo', steps_per_epoch=1000,
                          target_drop_rate=target_drop_rate,
                          layer_norm=layer_norm, expectile=expectile,
                          offlineBuffer=offline_buffer, policy_type=policy_type,
-                         utd_ratio_offline=utd_ratio_offline, policy_polyak_update=policy_polyak_update)
+                         utd_ratio_offline=utd_ratio_offline, policy_polyak_update=policy_polyak_update, reset_q=reset_q)
     # added by TH 20211206 <- bug fix 20211207
 
     print_class_attributes(agent)
@@ -272,6 +272,7 @@ if __name__ == '__main__':
     parser.add_argument("-utd_ratio_offline", type=int, default=1, )
     parser.add_argument("-network_width", type=int, default=256, )
     parser.add_argument("-policy_polyak_update", default=False, action='store_true')
+    parser.add_argument("-reset_q", default=False, action='store_true')
 
     args = parser.parse_args()
 
@@ -305,6 +306,7 @@ if __name__ == '__main__':
             "policy_polyak_update": args.policy_polyak_update,
             "utd_ratio_online": args.utd_ratio_online,
             "network_width": args.network_width,
+            "reset_q": args.reset_q,
         })
 
     redq_sac(args.env, seed=args.seed, epochs=args.epochs,
@@ -318,4 +320,4 @@ if __name__ == '__main__':
              offline_epochs=args.offline_epochs, offline_dimension=args.offline_dimension,
              method=args.method, offline_buffer=args.offline_buffer, policy_type=args.policy_type,
              utd_ratio_offline=args.utd_ratio_offline, policy_polyak_update=args.policy_polyak_update,
-             utd_ratio=args.utd_ratio_online, hidden_sizes=hidden_sizes)
+             utd_ratio=args.utd_ratio_online, hidden_sizes=hidden_sizes, reset_q=args.reset_q)
