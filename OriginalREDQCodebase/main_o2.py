@@ -1,3 +1,6 @@
+import os
+os.environ["MUJOCO_PY_MUJOCO_PATH"]="/andromeda/personal/gmacaluso/mujoco210/bin"
+
 import gym
 import numpy as np
 import torch
