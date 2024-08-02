@@ -265,6 +265,10 @@ class REDQSACAgent(object):
 
             self.q_optimizer_list = [optim.Adam(q.parameters(), lr=self.lr) for q in self.q_net_list]
 
+            self.policy_net = TanhGaussianPolicy(self.obs_dim, self.act_dim, (256, 256),
+                                                 action_limit=self.act_limit).to(self.device)
+            self.policy_optimizer = optim.Adam(self.policy_net.parameters(), lr=self.lr)
+
         if self.offlineBuffer == "prioritized":
 
             filtered_batches = self.replay_buffer.filter_top_x_transitions(x)

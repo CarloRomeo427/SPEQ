@@ -313,7 +313,7 @@ if __name__ == '__main__':
              logger_kwargs=logger_kwargs, debug=args.debug,
              # added by TH 20211206
              gpu_id=args.gpu_id,
-             target_drop_rate=args.target_drop_rate,  # tagert entropy -> dropout rate. Fixed 20211206
+             target_drop_rate=args.target_drop_rate,  # tagert entropy -> dropout rate. Fixed 20211206 fiao
              layer_norm=bool(args.layer_norm),
              expectile=args.expectile,
              offline_frequency=args.offline_frequency,
