@@ -81,7 +81,7 @@ def main():
         if max_interactions is not None:
             base_avg_df = compute_common_average(base_dfs, max_interactions)
         else:
-            base_avg_df = compute_common_average(base_dfs, float('inf'))
+            base_avg_df = compute_common_average(base_dfs, float('inf')) #aff
         print('Baseline:', base_avg_df['AverageEpRet'][:-5].mean(), base_avg_df['StdEpRet'][:-5].mean())
     else:
         print("No valid baseline data found.")
