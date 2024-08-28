@@ -45,7 +45,7 @@ def redq_sac(env_name, seed=0, epochs='mbpo', steps_per_epoch=1000,
              # TH 20211108
              gpu_id=0, target_drop_rate=0.0, layer_norm=False,
              method="redq", offline_frequency=1000,
-             offline_epochs=100, offline_dimension=5000, expectile=0.6, offline_buffer="prioritized",
+             offline_epochs=100, offline_dimension=5000, expectile=0.5, offline_buffer="prioritized",
              policy_type='default',
              utd_ratio_offline=None, policy_polyak_update=False, reset_q=False
              ):
@@ -273,6 +273,8 @@ if __name__ == '__main__':
     parser.add_argument("-network_width", type=int, default=256, )
     parser.add_argument("-policy_polyak_update", default=False, action='store_true')
     parser.add_argument("-reset_q", default=False, action='store_true')
+    parser.add_argument("-evaluate_bias", default=False, action='store_true')
+
 
     args = parser.parse_args()
 
@@ -308,6 +310,7 @@ if __name__ == '__main__':
             "utd_ratio_online": args.utd_ratio_online,
             "network_width": args.network_width,
             "reset_q": args.reset_q,
+            "evaluate_bias": args.evaluate_bias,
         })
 
     redq_sac(args.env, seed=args.seed, epochs=args.epochs,
@@ -321,4 +324,4 @@ if __name__ == '__main__':
              offline_epochs=args.offline_epochs, offline_dimension=args.offline_dimension,
              method=args.method, offline_buffer=args.offline_buffer, policy_type=args.policy_type,
              utd_ratio_offline=args.utd_ratio_offline, policy_polyak_update=args.policy_polyak_update,
-             utd_ratio=args.utd_ratio_online, hidden_sizes=hidden_sizes, reset_q=args.reset_q)
+             utd_ratio=args.utd_ratio_online, hidden_sizes=hidden_sizes, reset_q=args.reset_q, evaluate_bias=args.evaluate_bias)
