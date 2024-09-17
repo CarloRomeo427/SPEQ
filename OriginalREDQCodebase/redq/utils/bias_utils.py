@@ -1,6 +1,7 @@
 import numpy as np
 import torch
 from torch import Tensor
+import wandb
 
 def get_mc_return_with_entropy_on_reset(bias_eval_env, agent, max_ep_len, alpha, gamma, n_mc_eval, n_mc_cutoff):
     # since we want to also compute bias, so we need to
@@ -69,3 +70,8 @@ def log_bias_evaluation(bias_eval_env, agent, logger, max_ep_len, alpha, gamma, 
     logger.store(NormQBias=normalized_bias_per_state)
     normalized_bias_sqr_per_state = bias_squared / final_mc_entropy_list_normalize_base
     logger.store(NormQBiasSqr=normalized_bias_sqr_per_state)
+    # print(f"bias: {np.mean(bias)}, normalized bias: {np.mean(normalized_bias_per_state)}, normalized bias squared: {np.mean(normalized_bias_sqr_per_state)}")
+    # input()
+    wandb.log({"bias": np.mean(bias)})
+    wandb.log({"normalized_bias_per_state": np.mean(normalized_bias_per_state)})
+    wandb.log({"normalized_bias_sqr_per_state": np.mean(normalized_bias_sqr_per_state)})
