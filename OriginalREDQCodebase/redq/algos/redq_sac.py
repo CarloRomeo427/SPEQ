@@ -3,8 +3,9 @@ import torch
 from torch import Tensor
 import torch.nn as nn
 import torch.optim as optim
-from redq.algos.core import TanhGaussianPolicy, Mlp, soft_update_model1_with_model2, ReplayBuffer,\
+from redq.algos.core import TanhGaussianPolicy, Mlp, soft_update_model1_with_model2, ReplayBuffer, \
     mbpo_target_entropy_dict
+
 
 def get_probabilistic_num_min(num_mins):
     # allows the number of min to be a float
@@ -12,11 +13,12 @@ def get_probabilistic_num_min(num_mins):
     if num_mins - floored_num_mins > 0.001:
         prob_for_higher_value = num_mins - floored_num_mins
         if np.random.uniform(0, 1) < prob_for_higher_value:
-            return int(floored_num_mins+1)
+            return int(floored_num_mins + 1)
         else:
             return int(floored_num_mins)
     else:
         return num_mins
+
 
 class REDQSACAgent(object):
     """
@@ -27,6 +29,7 @@ class REDQSACAgent(object):
     Ensemble Average: set q_target_mode to 'ave'
     REM: set q_target_mode to 'rem'
     """
+
     def __init__(self, env_name, obs_dim, act_dim, act_limit, device,
                  hidden_sizes=(256, 256), replay_size=int(1e6), batch_size=256,
                  lr=3e-4, gamma=0.99, polyak=0.995,
@@ -35,17 +38,19 @@ class REDQSACAgent(object):
                  utd_ratio=20, num_Q=10, num_min=2, q_target_mode='min',
                  policy_update_delay=20,
                  # added 20211206
-                 target_drop_rate = 0.0, layer_norm = False
+                 target_drop_rate=0.0, layer_norm=False
                  ):
         # set up networks
         self.policy_net = TanhGaussianPolicy(obs_dim, act_dim, hidden_sizes, action_limit=act_limit).to(device)
         self.q_net_list, self.q_target_net_list = [], []
         for q_i in range(num_Q):
             # new_q_net = Mlp(obs_dim + act_dim, 1, hidden_sizes).to(device)
-            new_q_net = Mlp(obs_dim + act_dim, 1, hidden_sizes, target_drop_rate=target_drop_rate, layer_norm = layer_norm).to(device)
+            new_q_net = Mlp(obs_dim + act_dim, 1, hidden_sizes, target_drop_rate=target_drop_rate,
+                            layer_norm=layer_norm).to(device)
             self.q_net_list.append(new_q_net)
             # new_q_target_net = Mlp(obs_dim + act_dim, 1, hidden_sizes).to(device)
-            new_q_target_net = Mlp(obs_dim + act_dim, 1, hidden_sizes, target_drop_rate=target_drop_rate, layer_norm = layer_norm).to(device)
+            new_q_target_net = Mlp(obs_dim + act_dim, 1, hidden_sizes, target_drop_rate=target_drop_rate,
+                                   layer_norm=layer_norm).to(device)
             new_q_target_net.load_state_dict(new_q_net.state_dict())
             self.q_target_net_list.append(new_q_target_net)
         # set up optimizers
@@ -105,7 +110,7 @@ class REDQSACAgent(object):
             if self.__get_current_num_data() > self.start_steps:
                 obs_tensor = torch.Tensor(obs).unsqueeze(0).to(self.device)
                 action_tensor = self.policy_net.forward(obs_tensor, deterministic=False,
-                                             return_log_prob=False)[0]
+                                                        return_log_prob=False)[0]
                 action = action_tensor.cpu().numpy().reshape(-1)
             else:
                 action = env.action_space.sample()
@@ -116,16 +121,16 @@ class REDQSACAgent(object):
         with torch.no_grad():
             obs_tensor = torch.Tensor(obs).unsqueeze(0).to(self.device)
             action_tensor = self.policy_net.forward(obs_tensor, deterministic=True,
-                                         return_log_prob=False)[0]
+                                                    return_log_prob=False)[0]
             action = action_tensor.cpu().numpy().reshape(-1)
         return action
 
-    def get_action_and_logprob_for_bias_evaluation(self, obs): #TODO modify the readme here
+    def get_action_and_logprob_for_bias_evaluation(self, obs):  # TODO modify the readme here
         # given an observation, output a sampled action in numpy form
         with torch.no_grad():
             obs_tensor = torch.Tensor(obs).unsqueeze(0).to(self.device)
             action_tensor, _, _, log_prob_a_tilda, _, _, = self.policy_net.forward(obs_tensor, deterministic=False,
-                                         return_log_prob=True)
+                                                                                   return_log_prob=True)
             action = action_tensor.cpu().numpy().reshape(-1)
         return action, log_prob_a_tilda
 
@@ -138,6 +143,29 @@ class REDQSACAgent(object):
         q_prediction_cat = torch.cat(q_prediction_list, dim=1)
         average_q_prediction = torch.mean(q_prediction_cat, dim=1)
         return average_q_prediction
+
+    def get_td_error(self):
+        with torch.no_grad():
+            batch = self.replay_buffer.sample_all()
+            result = np.zeros([1, len(batch.obs_tensor)])
+            for i in range(0, len(batch.obs_tensor), 1000):
+                obs_tensor = Tensor(batch['obs1'][i:i + 1000]).to(self.device)
+                obs_next_tensor = Tensor(batch['obs2'][i:i + 1000]).to(self.device)
+                acts_tensor = Tensor(batch['acts'][i:i + 1000]).to(self.device)
+                rews_tensor = Tensor(batch['rews'][i:i + 1000]).unsqueeze(1).to(self.device)
+                done_tensor = Tensor(batch['done'][i:i + 1000]).unsqueeze(1).to(self.device)
+
+                y_q, sample_idxs = self.get_redq_q_target_no_grad(obs_next_tensor, rews_tensor, done_tensor)
+                q_prediction_list = []
+                for q_i in range(self.num_Q):
+                    q_prediction = self.q_net_list[q_i](torch.cat([obs_tensor, acts_tensor], 1))
+                    q_prediction_list.append(q_prediction)
+                q_prediction_cat = torch.cat(q_prediction_list, dim=1)
+                y_q = y_q.expand((-1, self.num_Q)) if y_q.shape[1] == 1 else y_q
+                q_loss_all = self.mse_criterion(q_prediction_cat, y_q) * self.num_Q
+                result[1:i + 1000] = q_loss_all.cpu().numpy()
+
+        return result
 
     def store_data(self, o, a, r, o2, d):
         # store one transition to the buffer
@@ -164,7 +192,8 @@ class REDQSACAgent(object):
                 a_tilda_next, _, _, log_prob_a_tilda_next, _, _ = self.policy_net.forward(obs_next_tensor)
                 q_prediction_next_list = []
                 for sample_idx in sample_idxs:
-                    q_prediction_next = self.q_target_net_list[sample_idx](torch.cat([obs_next_tensor, a_tilda_next], 1))
+                    q_prediction_next = self.q_target_net_list[sample_idx](
+                        torch.cat([obs_next_tensor, a_tilda_next], 1))
                     q_prediction_next_list.append(q_prediction_next)
                 q_prediction_next_cat = torch.cat(q_prediction_next_list, 1)
                 min_q, min_indices = torch.min(q_prediction_next_cat, dim=1, keepdim=True)
@@ -221,7 +250,8 @@ class REDQSACAgent(object):
             """policy and alpha loss"""
             if ((i_update + 1) % self.policy_update_delay == 0) or i_update == num_update - 1:
                 # get policy loss
-                a_tilda, mean_a_tilda, log_std_a_tilda, log_prob_a_tilda, _, pretanh = self.policy_net.forward(obs_tensor)
+                a_tilda, mean_a_tilda, log_std_a_tilda, log_prob_a_tilda, _, pretanh = self.policy_net.forward(
+                    obs_tensor)
                 q_a_tilda_list = []
                 for sample_idx in range(self.num_Q):
                     self.q_net_list[sample_idx].requires_grad_(False)
@@ -266,4 +296,3 @@ class REDQSACAgent(object):
         # if there is no update, log 0 to prevent logging problems
         if num_update == 0:
             logger.store(LossPi=0, LossQ1=0, LossAlpha=0, Q1Vals=0, Alpha=0, LogPi=0, PreTanh=0)
-
