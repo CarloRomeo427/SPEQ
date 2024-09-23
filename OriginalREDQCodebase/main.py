@@ -9,9 +9,9 @@ from redq.utils.run_utils import setup_logger_kwargs
 from redq.utils.bias_utils import log_bias_evaluation
 from redq.utils.logx import EpochLogger
 
-
 # added by TH 20211206
 import customenvs
+
 customenvs.register_mbpo_environments()
 
 
@@ -28,8 +28,8 @@ def redq_sac(env_name, seed=0, epochs='mbpo', steps_per_epoch=1000,
              # following are bias evaluation related
              evaluate_bias=True, n_mc_eval=1000, n_mc_cutoff=350, reseed_each_epoch=True,
              # TH 20211108
-             gpu_id = 0, target_drop_rate = 0.0, layer_norm = False,
-             method = "redq"
+             gpu_id=0, target_drop_rate=0.0, layer_norm=False,
+             method="redq"
              ):
     """
     :param env_name: name of the gym environment
@@ -57,8 +57,8 @@ def redq_sac(env_name, seed=0, epochs='mbpo', steps_per_epoch=1000,
     :param q_target_mode: 'min' for minimal, 'ave' for average, 'rem' for random ensemble mixture
     :param policy_update_delay: how many updates until we update policy network
     """
-    if debug: # use --debug for very quick debugging
-        hidden_sizes = [2,2]
+    if debug:  # use --debug for very quick debugging
+        hidden_sizes = [2, 2]
         batch_size = 2
         utd_ratio = 2
         num_Q = 3
@@ -74,7 +74,6 @@ def redq_sac(env_name, seed=0, epochs='mbpo', steps_per_epoch=1000,
         print("[MAIN]: use DUVN. set num_Q  and  num_min to 1")
         num_Q = 1
         num_min = 1
-
 
     # use gpu if available
     device = torch.device("cuda:" + str(gpu_id) if torch.cuda.is_available() else "cpu")
@@ -113,6 +112,7 @@ def redq_sac(env_name, seed=0, epochs='mbpo', steps_per_epoch=1000,
         test_env.action_space.np_random.seed(test_env_seed)
         bias_eval_env.seed(bias_eval_env_seed)
         bias_eval_env.action_space.np_random.seed(bias_eval_env_seed)
+
     seed_all(epoch=0)
 
     """prepare to init agent"""
@@ -132,15 +132,18 @@ def redq_sac(env_name, seed=0, epochs='mbpo', steps_per_epoch=1000,
 
     """init agent and start training"""
     agent = REDQSACAgent(env_name, obs_dim, act_dim, act_limit, device,
-                 hidden_sizes, replay_size, batch_size,
-                 lr, gamma, polyak,
-                 alpha, auto_alpha, target_entropy,
-                 start_steps, delay_update_steps,
-                 utd_ratio, num_Q, num_min, q_target_mode,
-                 policy_update_delay,
-                 target_drop_rate=target_drop_rate, layer_norm=layer_norm) # added by TH 20211206 <- bug fix 20211207
+                         hidden_sizes, replay_size, batch_size,
+                         lr, gamma, polyak,
+                         alpha, auto_alpha, target_entropy,
+                         start_steps, delay_update_steps,
+                         utd_ratio, num_Q, num_min, q_target_mode,
+                         policy_update_delay,
+                         target_drop_rate=target_drop_rate,
+                         layer_norm=layer_norm)  # added by TH 20211206 <- bug fix 20211207
 
     o, r, d, ep_ret, ep_len = env.reset(), 0, False, 0, 0
+
+    td_evaluation = np.zeros([300, 300_000])
 
     for t in range(total_steps):
         # get action from agent
@@ -163,7 +166,6 @@ def redq_sac(env_name, seed=0, epochs='mbpo', steps_per_epoch=1000,
         o = o2
         ep_ret += r
 
-
         if d or (ep_len == max_ep_len):
             # store episode return and length to logger
             logger.store(EpRet=ep_ret, EpLen=ep_len)
@@ -171,11 +173,11 @@ def redq_sac(env_name, seed=0, epochs='mbpo', steps_per_epoch=1000,
             o, r, d, ep_ret, ep_len = env.reset(), 0, False, 0, 0
 
         # End of epoch wrap-up
-        if (t+1) % steps_per_epoch == 0:
+        if (t + 1) % steps_per_epoch == 0:
             epoch = t // steps_per_epoch
 
             # Test the performance of the deterministic version of the agent.
-            test_agent(agent, test_env, max_ep_len, logger) # add logging here
+            test_agent(agent, test_env, max_ep_len, logger)  # add logging here
             if evaluate_bias:
                 log_bias_evaluation(bias_eval_env, agent, logger, max_ep_len, alpha, gamma, n_mc_eval, n_mc_cutoff)
 
@@ -183,11 +185,14 @@ def redq_sac(env_name, seed=0, epochs='mbpo', steps_per_epoch=1000,
             if reseed_each_epoch:
                 seed_all(epoch)
 
+            td_replaybuffer = agent.get_td_error()
+            td_evaluation[epoch, :t + 1] = td_replaybuffer
+
             """logging"""
             # Log info about epoch
             logger.log_tabular('Epoch', epoch)
             logger.log_tabular('TotalEnvInteracts', t)
-            logger.log_tabular('Time', time.time()-start_time)
+            logger.log_tabular('Time', time.time() - start_time)
             logger.log_tabular('EpRet', with_min_and_max=True)
             logger.log_tabular('EpLen', average_only=True)
             logger.log_tabular('TestEpRet', with_min_and_max=True)
@@ -199,6 +204,7 @@ def redq_sac(env_name, seed=0, epochs='mbpo', steps_per_epoch=1000,
             logger.log_tabular('Alpha', with_min_and_max=True)
             logger.log_tabular('LossAlpha', average_only=True)
             logger.log_tabular('PreTanh', with_min_and_max=True)
+            logger.log_tabular('TDMean', td_evaluation[epoch, :t + 1].mean())
 
             if evaluate_bias:
                 logger.log_tabular("MCDisRet", with_min_and_max=True)
@@ -214,30 +220,36 @@ def redq_sac(env_name, seed=0, epochs='mbpo', steps_per_epoch=1000,
             # flush logged information to disk
             sys.stdout.flush()
 
+
 if __name__ == '__main__':
     import argparse
+
     parser = argparse.ArgumentParser()
     parser.add_argument('-env', type=str, default='Hopper-v2')
     parser.add_argument('-seed', type=int, default=0)
-    parser.add_argument('-epochs', type=int, default=-1) # -1 means use mbpo epochs
+    parser.add_argument('-epochs', type=int, default=-1)  # -1 means use mbpo epochs
     parser.add_argument('-exp_name', type=str, default='redq_sac')
     parser.add_argument('-data_dir', type=str, default='./data/')
     parser.add_argument('-debug', action='store_true')
     # added by TH 20211108
     # use: -info, -gpu_id, -method, -target_drop_rate, -layer_norm
     parser.add_argument("-info", type=str, help="Information or name of the run")
-    parser.add_argument("-gpu_id", type=int, default=0, help="GPU device ID to be used in GPU experiment, default is 1e6")
-    parser.add_argument("-method", default="sac", choices=["sac", "redq", "duvn", "monosac"], help="method, default=sac")
-    parser.add_argument("-target_drop_rate", type=float, default=0.0, help="drop out rate of target value function, default=0")
+    parser.add_argument("-gpu_id", type=int, default=0,
+                        help="GPU device ID to be used in GPU experiment, default is 1e6")
+    parser.add_argument("-method", default="sac", choices=["sac", "redq", "duvn", "monosac"],
+                        help="method, default=sac")
+    parser.add_argument("-target_drop_rate", type=float, default=0.0,
+                        help="drop out rate of target value function, default=0")
     parser.add_argument("-layer_norm", type=int, default=0, choices=[0, 1],
                         help="Using layer normalization for training critics if set to 1 (TH), default=0")
     # ignore: -eval_every, -frames, -eval_runs, -updates_per_step, -target_entropy,
     parser.add_argument("-eval_every", type=int, default=1000,
                         help="Number of interactions after which the evaluation runs are performed, default = 1000")
-    parser.add_argument("-frames", type=int, default= 1000000,
+    parser.add_argument("-frames", type=int, default=1000000,
                         help="The amount of training interactions with the environment, default is 1mio")
     parser.add_argument("-eval_runs", type=int, default=3, help="Number of evaluation runs performed, default = 1")
-    parser.add_argument("-updates_per_step", type=int, default=1, help="Number of training updates per one environment step, default = 1")
+    parser.add_argument("-updates_per_step", type=int, default=1,
+                        help="Number of training updates per one environment step, default = 1")
     parser.add_argument("-target_entropy", type=float, default=None, help="target entropy , default=Num action")
 
     args = parser.parse_args()
@@ -246,7 +258,7 @@ if __name__ == '__main__':
     exp_name_full = args.exp_name + '_%s' % args.env
 
     # override log directory path. TH 20211108
-    args.data_dir  = './runs/' + str(args.info) + '/'
+    args.data_dir = './runs/' + str(args.info) + '/'
 
     # specify experiment name, seed and data_dir.
     # for example, for seed 0, the progress.txt will be saved under data_dir/exp_name/exp_name_s0
@@ -261,8 +273,8 @@ if __name__ == '__main__':
              logger_kwargs=logger_kwargs, debug=args.debug,
              # added by TH 20211206
              gpu_id=args.gpu_id,
-             target_drop_rate=args.target_drop_rate, # tagert entropy -> dropout rate. Fixed 20211206
+             target_drop_rate=args.target_drop_rate,  # tagert entropy -> dropout rate. Fixed 20211206
              layer_norm=bool(args.layer_norm),
              method=args.method)
-    #redq_sac(args.env, seed=args.seed, epochs=args.epochs,
+    # redq_sac(args.env, seed=args.seed, epochs=args.epochs,
     #         logger_kwargs=logger_kwargs, debug=args.debug)

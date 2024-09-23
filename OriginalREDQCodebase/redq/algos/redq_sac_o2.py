@@ -137,6 +137,29 @@ class REDQSACAgent(object):
         done_tensor = Tensor(batch['done']).unsqueeze(1).to(self.device)
         return obs_tensor, obs_next_tensor, acts_tensor, rews_tensor, done_tensor
 
+    def get_td_error(self):
+        with torch.no_grad():
+            batch = self.replay_buffer.sample_all()
+            result = np.zeros([1, len(batch['obs1'])])
+            for i in range(0, len(batch['obs1']), 1000):
+                obs_tensor = Tensor(batch['obs1'][i:i + 1000]).to(self.device)
+                obs_next_tensor = Tensor(batch['obs2'][i:i + 1000]).to(self.device)
+                acts_tensor = Tensor(batch['acts'][i:i + 1000]).to(self.device)
+                rews_tensor = Tensor(batch['rews'][i:i + 1000]).unsqueeze(1).to(self.device)
+                done_tensor = Tensor(batch['done'][i:i + 1000]).unsqueeze(1).to(self.device)
+
+                y_q, sample_idxs = self.get_redq_q_target_no_grad(obs_next_tensor, rews_tensor, done_tensor)
+                q_prediction_list = []
+                for q_i in range(self.num_Q):
+                    q_prediction = self.q_net_list[q_i](torch.cat([obs_tensor, acts_tensor], 1))
+                    q_prediction_list.append(q_prediction)
+                q_prediction_cat = torch.cat(q_prediction_list, dim=1)
+                y_q = y_q.expand((-1, self.num_Q)) if y_q.shape[1] == 1 else y_q
+                q_loss_all = ((q_prediction_cat - y_q)**2).mean(1)
+                result[0, i:i + 1000] = q_loss_all.cpu().numpy()
+
+        return result
+
     def get_redq_q_target_no_grad(self, obs_next_tensor, rews_tensor, done_tensor):
         num_mins_to_use = get_probabilistic_num_min(self.num_min)
         sample_idxs = np.random.choice(self.num_Q, num_mins_to_use, replace=False)
@@ -247,27 +270,31 @@ class REDQSACAgent(object):
         weight = torch.where(diff > 0, expectile, (1 - expectile))
         return weight * (diff ** 2)
 
+    def reset(self):
+        self.q_net_list, self.q_target_net_list = [], []
+        for q_i in range(self.num_Q):
+            new_q_net = Mlp(self.obs_dim + self.act_dim, 1, self.hidden_sizes, target_drop_rate=self.target_drop_rate,
+                            layer_norm=self.layer_norm).to(self.device)
+            self.q_net_list.append(new_q_net)
+            new_q_target_net = Mlp(self.obs_dim + self.act_dim, 1, self.hidden_sizes,
+                                   target_drop_rate=self.target_drop_rate,
+                                   layer_norm=self.layer_norm).to(self.device)
+            new_q_target_net.load_state_dict(new_q_net.state_dict())
+            self.q_target_net_list.append(new_q_target_net)
+
+        self.q_optimizer_list = [optim.Adam(q.parameters(), lr=self.lr) for q in self.q_net_list]
+
+        self.policy_net = TanhGaussianPolicy(self.obs_dim, self.act_dim, (256, 256),
+                                             action_limit=self.act_limit).to(self.device)
+        self.policy_optimizer = optim.Adam(self.policy_net.parameters(), lr=self.lr)
+
     def finetune_offline(self, epochs, x):
         """ Finetune the model on the top x% of the data """
 
         num_update = 0 if self.__get_current_num_data() <= self.delay_update_steps else self.utd_ratio_offline
 
-        if self.reset_q:
-            self.q_net_list, self.q_target_net_list = [], []
-            for q_i in range(self.num_Q):
-                new_q_net = Mlp(self.obs_dim + self.act_dim, 1, self.hidden_sizes, target_drop_rate=self.target_drop_rate,
-                                layer_norm=self.layer_norm).to(self.device)
-                self.q_net_list.append(new_q_net)
-                new_q_target_net = Mlp(self.obs_dim + self.act_dim, 1, self.hidden_sizes, target_drop_rate=self.target_drop_rate,
-                                       layer_norm=self.layer_norm).to(self.device)
-                new_q_target_net.load_state_dict(new_q_net.state_dict())
-                self.q_target_net_list.append(new_q_target_net)
-
-            self.q_optimizer_list = [optim.Adam(q.parameters(), lr=self.lr) for q in self.q_net_list]
-
-            self.policy_net = TanhGaussianPolicy(self.obs_dim, self.act_dim, (256, 256),
-                                                 action_limit=self.act_limit).to(self.device)
-            self.policy_optimizer = optim.Adam(self.policy_net.parameters(), lr=self.lr)
+        # if self.reset_q:
+        #     self.reset()
 
         if self.offlineBuffer == "prioritized":
 
@@ -306,18 +333,19 @@ class REDQSACAgent(object):
                     raise NotImplementedError
 
                 """Q loss"""
-                y_q, sample_idxs = self.get_redq_q_target_no_grad(obs_next_tensor, rews_tensor, done_tensor)
-                q_prediction_list = []
-                for q_i in range(self.num_Q):
-                    q_prediction = self.q_net_list[q_i](torch.cat([obs_tensor, acts_tensor], 1))
-                    q_prediction_list.append(q_prediction)
-                q_prediction_cat = torch.cat(q_prediction_list, dim=1)
-                y_q = y_q.expand((-1, self.num_Q)) if y_q.shape[1] == 1 else y_q
-                q_loss_all = self.expectile_loss(q_prediction_cat - y_q, expectile=self.expectile).mean() * self.num_Q
+                if self.policy_type != 'only':
+                    y_q, sample_idxs = self.get_redq_q_target_no_grad(obs_next_tensor, rews_tensor, done_tensor)
+                    q_prediction_list = []
+                    for q_i in range(self.num_Q):
+                        q_prediction = self.q_net_list[q_i](torch.cat([obs_tensor, acts_tensor], 1))
+                        q_prediction_list.append(q_prediction)
+                    q_prediction_cat = torch.cat(q_prediction_list, dim=1)
+                    y_q = y_q.expand((-1, self.num_Q)) if y_q.shape[1] == 1 else y_q
+                    q_loss_all = self.expectile_loss(q_prediction_cat - y_q, expectile=self.expectile).mean() * self.num_Q
 
-                for q_i in range(self.num_Q):
-                    self.q_optimizer_list[q_i].zero_grad()
-                q_loss_all.backward()
+                    for q_i in range(self.num_Q):
+                        self.q_optimizer_list[q_i].zero_grad()
+                    q_loss_all.backward()
 
                 """policy loss"""
                 if (((
@@ -355,7 +383,8 @@ class REDQSACAgent(object):
                     self.policy_optimizer.step()
 
                 for q_i in range(self.num_Q):
-                    soft_update_model1_with_model2(self.q_target_net_list[q_i], self.q_net_list[q_i], self.polyak)
+                    soft_update_model1_with_model2(self.q_target_net_list[q_i], self.q_net_list[q_i], self.polyak) #todo criminale!
+                    # self.q_target_net_list[q_i] = copy.deepcopy(self.q_net_list[q_i])
 
                 if self.policy_polyak_update:
                     soft_update_policy(self.target_policy_net, self.policy_net, self.polyak)

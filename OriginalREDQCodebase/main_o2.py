@@ -1,3 +1,5 @@
+import os.path
+
 import gym
 import numpy as np
 import torch
@@ -47,7 +49,7 @@ def redq_sac(env_name, seed=0, epochs='mbpo', steps_per_epoch=1000,
              method="redq", offline_frequency=1000,
              offline_epochs=100, offline_dimension=5000, expectile=0.6, offline_buffer="prioritized",
              policy_type='default',
-             utd_ratio_offline=None, policy_polyak_update=False, reset_q=False
+             utd_ratio_offline=None, policy_polyak_update=False, reset_q=False, auto_w_bias=False, evaluate_td=False
              ):
     """
     :param env_name: name of the gym environment
@@ -159,12 +161,14 @@ def redq_sac(env_name, seed=0, epochs='mbpo', steps_per_epoch=1000,
                          target_drop_rate=target_drop_rate,
                          layer_norm=layer_norm, expectile=expectile,
                          offlineBuffer=offline_buffer, policy_type=policy_type,
-                         utd_ratio_offline=utd_ratio_offline, policy_polyak_update=policy_polyak_update, reset_q=reset_q)
+                         utd_ratio_offline=utd_ratio_offline, policy_polyak_update=policy_polyak_update,
+                         reset_q=reset_q)
     # added by TH 20211206 <- bug fix 20211207
 
     print_class_attributes(agent)
 
     o, r, d, ep_ret, ep_len = env.reset(), 0, False, 0, 0
+    if evaluate_td: td_evaluation = np.zeros([296, 310_000])
 
     for t in range(total_steps):
         # get action from agent
@@ -181,7 +185,11 @@ def redq_sac(env_name, seed=0, epochs='mbpo', steps_per_epoch=1000,
 
         # give new data to agent
         agent.store_data(o, a, r, o2, d)
-        if (t + 1) % offline_frequency == 0:
+
+        if reset_q and ((t + 1) % offline_frequency == 0):  # todo test reset vanilla
+            agent.reset()
+
+        if offline_frequency > 0 and (t + 1) % offline_frequency == 0:
             agent.finetune_offline(epochs=offline_epochs, x=offline_dimension)
 
         # let agent update
@@ -196,6 +204,39 @@ def redq_sac(env_name, seed=0, epochs='mbpo', steps_per_epoch=1000,
             # reset environment
             o, r, d, ep_ret, ep_len = env.reset(), 0, False, 0, 0
 
+        if auto_w_bias and (t + 1) % 1000 == 0 and (t + 1) > 150000:
+
+            normalized_bias_sqr_per_state, normalized_bias_per_state, bias = log_bias_evaluation(bias_eval_env,
+                                                                                                 agent, logger,
+                                                                                                 max_ep_len, alpha,
+                                                                                                 gamma, n_mc_eval,
+                                                                                                 n_mc_cutoff)
+            wandb.log({"normalized_bias_sqr_per_state": np.abs(np.mean(normalized_bias_sqr_per_state)),
+                       "normalized_bias_per_state": np.mean(normalized_bias_per_state),
+                       "bias": np.mean(bias)
+                       })
+            initial_strd_bias = np.abs(np.mean(normalized_bias_per_state))
+            if initial_strd_bias > .7:
+                print("lets fix bias", initial_strd_bias)
+                i = 0
+                strd_bias = initial_strd_bias
+                while strd_bias > initial_strd_bias * 0.5 and i < 100:
+                    agent.finetune_offline(epochs=100, x=offline_dimension)
+
+                    normalized_bias_sqr_per_state, normalized_bias_per_state, bias_abs = log_bias_evaluation(
+                        bias_eval_env,
+                        agent, logger,
+                        max_ep_len, alpha,
+                        gamma, n_mc_eval,
+                        n_mc_cutoff)
+                    strd_bias = np.abs(np.mean(normalized_bias_per_state))
+                    print("new bias", strd_bias)
+                    i += 1
+                print()
+                wandb.log({"off_epochs": i * 100,
+                           "time": t + 1
+                           })
+
         # End of epoch wrap-up
         if (t + 1) % steps_per_epoch == 0:
             epoch = t // steps_per_epoch
@@ -203,8 +244,22 @@ def redq_sac(env_name, seed=0, epochs='mbpo', steps_per_epoch=1000,
             test_rw = test_agent(agent, test_env, max_ep_len, logger)  # add logging here
             wandb.log({"EvalReward": np.mean(test_rw)})
 
-            if evaluate_bias:
-                log_bias_evaluation(bias_eval_env, agent, logger, max_ep_len, alpha, gamma, n_mc_eval, n_mc_cutoff)
+            if (t + 1) > 5000 and evaluate_td:
+                td_replaybuffer = agent.get_td_error()
+                td_evaluation[epoch-5, :t+1] = td_replaybuffer
+                wandb.log({"TD_error": np.mean(td_replaybuffer)})
+                np.save(os.path.join(logger_kwargs["output_dir"], "result_td_eval.npy"), td_evaluation)
+
+            if evaluate_bias or (auto_w_bias and not ((t + 1) > 150000)):
+                normalized_bias_sqr_per_state, normalized_bias_per_state, bias = log_bias_evaluation(bias_eval_env,
+                                                                                                     agent, logger,
+                                                                                                     max_ep_len, alpha,
+                                                                                                     gamma, n_mc_eval,
+                                                                                                     n_mc_cutoff)
+                wandb.log({"normalized_bias_sqr_per_state": np.abs(np.mean(normalized_bias_sqr_per_state)),
+                           "normalized_bias_per_state": np.mean(normalized_bias_per_state),
+                           "bias": np.mean(bias)
+                           })
 
             # reseed should improve reproducibility (should make results the same whether bias evaluation is on or not)
             if reseed_each_epoch:
@@ -242,6 +297,7 @@ def redq_sac(env_name, seed=0, epochs='mbpo', steps_per_epoch=1000,
             sys.stdout.flush()
 
 
+
 if __name__ == '__main__':
     import argparse
 
@@ -273,6 +329,9 @@ if __name__ == '__main__':
     parser.add_argument("-network_width", type=int, default=256, )
     parser.add_argument("-policy_polyak_update", default=False, action='store_true')
     parser.add_argument("-reset_q", default=False, action='store_true')
+    parser.add_argument("-auto_w_bias", default=False, action='store_true')
+    parser.add_argument("-evaluate_bias", default=False, action='store_true')
+    parser.add_argument("-evaluate_td", default=False, action='store_true')
 
     args = parser.parse_args()
 
@@ -307,6 +366,9 @@ if __name__ == '__main__':
             "utd_ratio_online": args.utd_ratio_online,
             "network_width": args.network_width,
             "reset_q": args.reset_q,
+            "auto_w_bias": args.auto_w_bias,
+            "evaluate_bias": args.evaluate_bias,
+            "evaluate_td": args.evaluate_td,
         })
 
     redq_sac(args.env, seed=args.seed, epochs=args.epochs,
@@ -320,4 +382,5 @@ if __name__ == '__main__':
              offline_epochs=args.offline_epochs, offline_dimension=args.offline_dimension,
              method=args.method, offline_buffer=args.offline_buffer, policy_type=args.policy_type,
              utd_ratio_offline=args.utd_ratio_offline, policy_polyak_update=args.policy_polyak_update,
-             utd_ratio=args.utd_ratio_online, hidden_sizes=hidden_sizes, reset_q=args.reset_q)
+             utd_ratio=args.utd_ratio_online, hidden_sizes=hidden_sizes, reset_q=args.reset_q,
+             auto_w_bias=args.auto_w_bias, evaluate_bias=args.evaluate_bias, evaluate_td=args.evaluate_td)

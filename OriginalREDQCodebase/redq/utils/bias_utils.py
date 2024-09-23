@@ -69,3 +69,4 @@ def log_bias_evaluation(bias_eval_env, agent, logger, max_ep_len, alpha, gamma, 
     logger.store(NormQBias=normalized_bias_per_state)
     normalized_bias_sqr_per_state = bias_squared / final_mc_entropy_list_normalize_base
     logger.store(NormQBiasSqr=normalized_bias_sqr_per_state)
+    return normalized_bias_sqr_per_state, normalized_bias_per_state, bias
