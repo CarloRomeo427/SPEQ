@@ -52,7 +52,10 @@ class REDQSACAgent(object):
             if target_entropy == 'mbpo':
                 mbpo_target_entropy_dict['AntTruncatedObs-v2'] = -4
                 mbpo_target_entropy_dict['HumanoidTruncatedObs-v2'] = -2
-                self.target_entropy = mbpo_target_entropy_dict[env_name]
+                try:
+                    self.target_entropy = mbpo_target_entropy_dict[env_name]
+                except:
+                    self.target_entropy = -2
             self.log_alpha = torch.zeros(1, requires_grad=True, device=device)
             self.alpha_optim = optim.Adam([self.log_alpha], lr=lr)
             self.alpha = self.log_alpha.cpu().exp().item()
