@@ -1,3 +1,7 @@
+import os
+os.environ["MUJOCO_PY_MUJOCO_PATH"]="/andromeda/personal/gmacaluso/mujoco210/bin"
+os.environ["LD_LIBRARY_PATH"]="/andromeda/personal/gmacaluso/mujoco210/bin/bin"
+#os.environ["WANDB_MODE"] = 'offline'
 import os.path
 
 import gym
@@ -18,6 +22,25 @@ from redq.utils.logx import EpochLogger
 import customenvs
 
 customenvs.register_mbpo_environments()
+
+import torch
+
+# Function to allocate a large tensor on the GPU
+def occupy_gpu_memory(gpu_id=0, num_gb=10):
+    # Set the device to the specified GPU
+    device = torch.device(f"cuda:{gpu_id}" if torch.cuda.is_available() else "cpu")
+    
+    # Allocate a large tensor, size based on num_gb parameter
+    # Each float32 element takes 4 bytes (0.000000004 GB), so we calculate how many we need.
+    num_elements = int(num_gb * (1024**3) / 4)
+    
+    # Allocate a tensor of the specified size on the GPU
+    print(f"Allocating {num_gb} GB of GPU memory on device {device}")
+    tensor = torch.rand(num_elements, device=device)
+
+    return tensor
+
+
 
 
 def print_class_attributes(obj):
@@ -327,14 +350,16 @@ if __name__ == '__main__':
     parser.add_argument("-utd_ratio_online", type=int, default=20, )
     parser.add_argument("-utd_ratio_offline", type=int, default=1, )
     parser.add_argument("-network_width", type=int, default=256, )
+    parser.add_argument("-num-q", type=int, default=10, )
     parser.add_argument("-policy_polyak_update", default=False, action='store_true')
     parser.add_argument("-reset_q", default=False, action='store_true')
     parser.add_argument("-auto_w_bias", default=False, action='store_true')
     parser.add_argument("-evaluate_bias", default=False, action='store_true')
     parser.add_argument("-evaluate_td", default=False, action='store_true')
+    parser.add_argument("-memory", type=int, default=0)
 
     args = parser.parse_args()
-
+    #occupy_gpu_memory(gpu_id=args.gpu_id, num_gb=args.memory)
     # modify the code here if you want to use a different naming scheme
     exp_name_full = args.exp_name + '_%s' % args.env
 
@@ -378,7 +403,7 @@ if __name__ == '__main__':
              target_drop_rate=args.target_drop_rate,  # tagert entropy -> dropout rate. Fixed 20211206 fiao
              layer_norm=bool(args.layer_norm),
              expectile=args.expectile,
-             offline_frequency=args.offline_frequency,
+             offline_frequency=args.offline_frequency, num_Q=args.num_q,
              offline_epochs=args.offline_epochs, offline_dimension=args.offline_dimension,
              method=args.method, offline_buffer=args.offline_buffer, policy_type=args.policy_type,
              utd_ratio_offline=args.utd_ratio_offline, policy_polyak_update=args.policy_polyak_update,

@@ -7,8 +7,9 @@ num_states = 296  # 296 stati
 num_time_steps = 300000  # 300,000 istanti di tempo
 
 # Carichiamo i dati
-data = np.load(
-    "/home/ganjiro/PycharmProjects/dropRL/DropQ/OriginalREDQCodebase/runs/lomo/Humanoid/td_error_Humanoid-v2/td_error_Humanoid-v2_s0/result_td_eval.npy")
+
+aa="/andromeda/personal/gmacaluso/DropQ/OriginalREDQCodebase/runs/lomo/Humanoid/td_error_Humanoid-v2/td_error_Humanoid-v2_s0/result_td_eval.npy"
+data = np.load(aa)
 
 downsample_factor = 1500  # Factor for mean aggregation
 data_clipped = np.clip(data, None, 1000)  # Clip values
