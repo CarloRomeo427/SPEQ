@@ -355,7 +355,7 @@ class REDQSACAgent(object):
                 """policy loss"""
                 if ((((
                               i_update + 1) % self.utd_ratio_offline == 0) or i_update == num_update - 1) and self.policy_type != 'None') \
-                        or (i_update + 1) % self.policy_frequency == 0:
+                        or (self.policy_frequency != -1 and (i_update + 1) % self.policy_frequency == 0):
                     a_tilda, mean_a_tilda, log_std_a_tilda, log_prob_a_tilda, _, pretanh = self.policy_net.forward(
                         obs_tensor)
                     q_a_tilda_list = []
@@ -367,7 +367,7 @@ class REDQSACAgent(object):
                     ave_q = torch.mean(q_a_tilda_cat, dim=1, keepdim=True)
                     # print(f"SHAPES -> A pi: {self.policy_net.forward(obs_tensor, False, False)[0].shape}, A DB: {acts_tensor.shape}")
                     # input()
-                    if self.policy_type == 'default':
+                    if (self.policy_type == 'default' or self.policy_type == 'None'):
                         policy_loss = (self.alpha * log_prob_a_tilda - ave_q).mean()
                     elif self.policy_type == 'bc':
                         policy_loss = (self.alpha * log_prob_a_tilda - ave_q).mean() + 0.5 * F.mse_loss(a_tilda,
