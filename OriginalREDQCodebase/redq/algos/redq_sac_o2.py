@@ -32,7 +32,7 @@ class REDQSACAgent(object):
                  utd_ratio=20, num_Q=10, num_min=2, q_target_mode='min',
                  policy_update_delay=20, expectile=0.5,
                  target_drop_rate=0.0, layer_norm=False, offlineBuffer="prioritized", policy_type='default',
-                 utd_ratio_offline=None, policy_polyak_update=False, reset_q=False):
+                 utd_ratio_offline=None, policy_polyak_update=False, reset_q=False, policy_frequency=-1):
         self.policy_net = TanhGaussianPolicy(obs_dim, act_dim, (256, 256), action_limit=act_limit).to(device)
         self.q_net_list, self.q_target_net_list = [], []
         for q_i in range(num_Q):
@@ -90,6 +90,7 @@ class REDQSACAgent(object):
         self.reset_q = reset_q
         self.target_drop_rate = target_drop_rate
         self.layer_norm = layer_norm
+        self.policy_frequency = policy_frequency
 
     def __get_current_num_data(self):
         return self.replay_buffer.size
@@ -158,7 +159,7 @@ class REDQSACAgent(object):
                     q_prediction_list.append(q_prediction)
                 q_prediction_cat = torch.cat(q_prediction_list, dim=1)
                 y_q = y_q.expand((-1, self.num_Q)) if y_q.shape[1] == 1 else y_q
-                q_loss_all = ((q_prediction_cat - y_q)**2).mean(1)
+                q_loss_all = ((q_prediction_cat - y_q) ** 2).mean(1)
                 result[0, i:i + 1000] = q_loss_all.cpu().numpy()
 
         return result
@@ -287,9 +288,9 @@ class REDQSACAgent(object):
 
         self.q_optimizer_list = [optim.Adam(q.parameters(), lr=self.lr) for q in self.q_net_list]
 
-        #self.policy_net = TanhGaussianPolicy(self.obs_dim, self.act_dim, (256, 256),
+        # self.policy_net = TanhGaussianPolicy(self.obs_dim, self.act_dim, (256, 256),
         #                                     action_limit=self.act_limit).to(self.device)
-        #self.policy_optimizer = optim.Adam(self.policy_net.parameters(), lr=self.lr)
+        # self.policy_optimizer = optim.Adam(self.policy_net.parameters(), lr=self.lr)
 
     def finetune_offline(self, epochs, x):
         """ Finetune the model on the top x% of the data """
@@ -344,15 +345,17 @@ class REDQSACAgent(object):
                         q_prediction_list.append(q_prediction)
                     q_prediction_cat = torch.cat(q_prediction_list, dim=1)
                     y_q = y_q.expand((-1, self.num_Q)) if y_q.shape[1] == 1 else y_q
-                    q_loss_all = self.expectile_loss(q_prediction_cat - y_q, expectile=self.expectile).mean() * self.num_Q
+                    q_loss_all = self.expectile_loss(q_prediction_cat - y_q,
+                                                     expectile=self.expectile).mean() * self.num_Q
 
                     for q_i in range(self.num_Q):
                         self.q_optimizer_list[q_i].zero_grad()
                     q_loss_all.backward()
 
                 """policy loss"""
-                if (((
-                             i_update + 1) % self.utd_ratio_offline == 0) or i_update == num_update - 1) and self.policy_type != 'None':
+                if ((((
+                              i_update + 1) % self.utd_ratio_offline == 0) or i_update == num_update - 1) and self.policy_type != 'None') \
+                        or (i_update + 1) % self.policy_frequency == 0:
                     a_tilda, mean_a_tilda, log_std_a_tilda, log_prob_a_tilda, _, pretanh = self.policy_net.forward(
                         obs_tensor)
                     q_a_tilda_list = []
@@ -386,15 +389,16 @@ class REDQSACAgent(object):
                     self.policy_optimizer.step()
 
                 for q_i in range(self.num_Q):
-                    soft_update_model1_with_model2(self.q_target_net_list[q_i], self.q_net_list[q_i], self.polyak) #todo criminale!
+                    soft_update_model1_with_model2(self.q_target_net_list[q_i], self.q_net_list[q_i],
+                                                   self.polyak)  # todo criminale!
                     # self.q_target_net_list[q_i] = copy.deepcopy(self.q_net_list[q_i])
 
                 if self.policy_polyak_update:
                     soft_update_policy(self.target_policy_net, self.policy_net, self.polyak)
                     # model2_param.data.copy_(rou*model1_param.data + (1-rou)*model2_param.data)
 
-                    if i_update == num_update - 1:
-                        wandb.log(
-                            {"policy_loss_offline": policy_loss.cpu().item(),
-                             "mean_loss_q_offline": q_loss_all.cpu().item() / self.num_Q
-                             })
+                    # if i_update == num_update - 1:
+                    #     wandb.log(
+                    #         {"policy_loss_offline": policy_loss.cpu().item(),
+                    #          "mean_loss_q_offline": q_loss_all.cpu().item() / self.num_Q
+                    #          })

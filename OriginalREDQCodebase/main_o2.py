@@ -1,7 +1,8 @@
 import os
-os.environ["MUJOCO_PY_MUJOCO_PATH"]="/andromeda/personal/gmacaluso/mujoco210/bin"
-os.environ["LD_LIBRARY_PATH"]="/andromeda/personal/gmacaluso/mujoco210/bin/bin"
-#os.environ["WANDB_MODE"] = 'offline'
+
+os.environ["MUJOCO_PY_MUJOCO_PATH"] = "/andromeda/personal/gmacaluso/mujoco210/bin"
+os.environ["LD_LIBRARY_PATH"] = "/andromeda/personal/gmacaluso/mujoco210/bin/bin"
+# os.environ["WANDB_MODE"] = 'offline'
 import os.path
 
 import gym
@@ -25,22 +26,21 @@ customenvs.register_mbpo_environments()
 
 import torch
 
+
 # Function to allocate a large tensor on the GPU
 def occupy_gpu_memory(gpu_id=0, num_gb=10):
     # Set the device to the specified GPU
     device = torch.device(f"cuda:{gpu_id}" if torch.cuda.is_available() else "cpu")
-    
+
     # Allocate a large tensor, size based on num_gb parameter
     # Each float32 element takes 4 bytes (0.000000004 GB), so we calculate how many we need.
-    num_elements = int(num_gb * (1024**3) / 4)
-    
+    num_elements = int(num_gb * (1024 ** 3) / 4)
+
     # Allocate a tensor of the specified size on the GPU
     print(f"Allocating {num_gb} GB of GPU memory on device {device}")
     tensor = torch.rand(num_elements, device=device)
 
     return tensor
-
-
 
 
 def print_class_attributes(obj):
@@ -72,8 +72,8 @@ def redq_sac(env_name, seed=0, epochs='mbpo', steps_per_epoch=1000,
              method="redq", offline_frequency=1000,
              offline_epochs=100, offline_dimension=5000, expectile=0.6, offline_buffer="prioritized",
              policy_type='default',
-             utd_ratio_offline=None, policy_polyak_update=False, reset_q=False, auto_w_bias=False, evaluate_td=False
-             ):
+             utd_ratio_offline=None, policy_polyak_update=False, reset_q=False, auto_w_bias=False, evaluate_td=False,
+             policy_frequency=-1):
     """
     :param env_name: name of the gym environment
     :param seed: random seed
@@ -185,7 +185,7 @@ def redq_sac(env_name, seed=0, epochs='mbpo', steps_per_epoch=1000,
                          layer_norm=layer_norm, expectile=expectile,
                          offlineBuffer=offline_buffer, policy_type=policy_type,
                          utd_ratio_offline=utd_ratio_offline, policy_polyak_update=policy_polyak_update,
-                         reset_q=reset_q)
+                         reset_q=reset_q, policy_frequency=policy_frequency)
     # added by TH 20211206 <- bug fix 20211207
 
     print_class_attributes(agent)
@@ -269,7 +269,7 @@ def redq_sac(env_name, seed=0, epochs='mbpo', steps_per_epoch=1000,
 
             if (t + 1) > 5000 and evaluate_td:
                 td_replaybuffer = agent.get_td_error()
-                td_evaluation[epoch-5, :t+1] = td_replaybuffer
+                td_evaluation[epoch - 5, :t + 1] = td_replaybuffer
                 wandb.log({"TD_error": np.mean(td_replaybuffer)})
                 np.save(os.path.join(logger_kwargs["output_dir"], "result_td_eval.npy"), td_evaluation)
 
@@ -320,7 +320,6 @@ def redq_sac(env_name, seed=0, epochs='mbpo', steps_per_epoch=1000,
             sys.stdout.flush()
 
 
-
 if __name__ == '__main__':
     import argparse
 
@@ -357,9 +356,10 @@ if __name__ == '__main__':
     parser.add_argument("-evaluate_bias", default=False, action='store_true')
     parser.add_argument("-evaluate_td", default=False, action='store_true')
     parser.add_argument("-memory", type=int, default=0)
+    parser.add_argument("-policy_frequency", type=int, default=-1)
 
     args = parser.parse_args()
-    #occupy_gpu_memory(gpu_id=args.gpu_id, num_gb=args.memory)
+    # occupy_gpu_memory(gpu_id=args.gpu_id, num_gb=args.memory)
     # modify the code here if you want to use a different naming scheme
     exp_name_full = args.exp_name + '_%s' % args.env
 
@@ -394,6 +394,7 @@ if __name__ == '__main__':
             "auto_w_bias": args.auto_w_bias,
             "evaluate_bias": args.evaluate_bias,
             "evaluate_td": args.evaluate_td,
+            "policy_frequency ": args.policy_frequency,
         })
 
     redq_sac(args.env, seed=args.seed, epochs=args.epochs,
@@ -408,4 +409,5 @@ if __name__ == '__main__':
              method=args.method, offline_buffer=args.offline_buffer, policy_type=args.policy_type,
              utd_ratio_offline=args.utd_ratio_offline, policy_polyak_update=args.policy_polyak_update,
              utd_ratio=args.utd_ratio_online, hidden_sizes=hidden_sizes, reset_q=args.reset_q,
-             auto_w_bias=args.auto_w_bias, evaluate_bias=args.evaluate_bias, evaluate_td=args.evaluate_td)
+             auto_w_bias=args.auto_w_bias, evaluate_bias=args.evaluate_bias, evaluate_td=args.evaluate_td,
+             policy_frequency=args.policy_frequency)
