@@ -10,6 +10,8 @@ from redq.algos.core import TanhGaussianPolicy, Mlp, soft_update_model1_with_mod
     mbpo_target_entropy_dict, soft_update_policy
 import wandb
 
+from redq.algos.core import test_agent
+
 
 def get_probabilistic_num_min(num_mins):
     floored_num_mins = np.floor(num_mins)
@@ -292,7 +294,7 @@ class REDQSACAgent(object):
         #                                     action_limit=self.act_limit).to(self.device)
         # self.policy_optimizer = optim.Adam(self.policy_net.parameters(), lr=self.lr)
 
-    def finetune_offline(self, epochs, x):
+    def finetune_offline(self, epochs, x, test_env=None):
         """ Finetune the model on the top x% of the data """
 
         num_update = 0 if self.__get_current_num_data() <= self.delay_update_steps else self.utd_ratio_offline
@@ -311,7 +313,10 @@ class REDQSACAgent(object):
             for key in filtered_batches:
                 filtered_batches[key] = np.array(filtered_batches[key])
 
-        for _ in range(epochs):
+        for e in range(epochs):
+            if test_env and (e + 1) % 5000 == 0:
+                test_rw = test_agent(self, test_env, 1000, None)  # add logging here
+                wandb.log({"EvalReward": np.mean(test_rw)})
             for i_update in range(num_update):
                 if self.policy_polyak_update:
                     self.target_policy_net = copy.deepcopy(self.policy_net)
@@ -390,7 +395,7 @@ class REDQSACAgent(object):
 
                 for q_i in range(self.num_Q):
                     soft_update_model1_with_model2(self.q_target_net_list[q_i], self.q_net_list[q_i],
-                                                   self.polyak)  # todo criminale!
+                                                   self.polyak)
                     # self.q_target_net_list[q_i] = copy.deepcopy(self.q_net_list[q_i])
 
                 if self.policy_polyak_update:

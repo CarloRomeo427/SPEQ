@@ -1,7 +1,7 @@
 import os
 
-os.environ["MUJOCO_PY_MUJOCO_PATH"] = "/andromeda/personal/gmacaluso/mujoco210/bin"
-os.environ["LD_LIBRARY_PATH"] = "/andromeda/personal/gmacaluso/mujoco210/bin/bin"
+# os.environ["MUJOCO_PY_MUJOCO_PATH"] = "/andromeda/personal/gmacaluso/mujoco210/bin"
+# os.environ["LD_LIBRARY_PATH"] = "/andromeda/personal/gmacaluso/mujoco210/bin/bin"
 # os.environ["WANDB_MODE"] = 'offline'
 import os.path
 
@@ -213,7 +213,7 @@ def redq_sac(env_name, seed=0, epochs='mbpo', steps_per_epoch=1000,
             agent.reset()
 
         if offline_frequency > 0 and (t + 1) % offline_frequency == 0:
-            agent.finetune_offline(epochs=offline_epochs, x=offline_dimension)
+            agent.finetune_offline(epochs=offline_epochs, x=offline_dimension, test_env=test_env)
 
         # let agent update
         agent.train(logger)
