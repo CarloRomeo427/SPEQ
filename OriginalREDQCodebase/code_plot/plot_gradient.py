@@ -10,14 +10,14 @@ api = wandb.Api()
 
 # Project is specified by <entity/project-name>
 runs = api.runs("girolamomacaluso/lomo")
-envs = ["Hopper", "HalfCheetah", "Humanoid", "Walker2d", "Ant", ]
-durations = [300, 300, 300, 300, 300, ]
+envs = ["Hopper", "Ant", ]
+# durations = [300, 300, 300, 300, 300, ]
 
 save_dir = "/home/ganjiro/PycharmProjects/dropRL/DropQ/OriginalREDQCodebase/plots"
 exp_name = "gradient"
 
 
-def exponential_moving_average(data, alpha=0.2):
+def exponential_moving_average(data, alpha=0.15):
     ema = [data[0]]  # initialize with the first value
     for value in data[1:]:
         ema.append(ema[-1] * (1 - alpha) + alpha * value)
@@ -27,17 +27,21 @@ def exponential_moving_average(data, alpha=0.2):
 for j, env in enumerate(envs):
 
     if env not in ["Hopper", "HalfCheetah"]:
-        eval_runs = [f'10K_75K_bias_dropQ_{env}-v2', f'SMC_sac_{env}-v2', f'sac_1_vanilla_{env}-v2',
+        eval_runs = [f'10K_75K_drop_rw_{env}-v2', f'SMC_sac_{env}-v2', f'SMC_redq_{env}-v2',
+                     f'sac_1_vanilla_{env}-v2',
                      f'vanilla_redQ_{env}-v2',
                      f'vanilla_dropQ_bias_{env}-v2',
-                     f'SMC_redq_{env}-v2']
+                     ]
     else:
-        eval_runs = [f'10K_75K_bias_dropQ_300_{env}-v2', f'SMC_sac_{env}-v2', f'sac_1_vanilla_{env}-v2',
+        eval_runs = [f'10K_75K_drop_rw_{env}-v2', f'SMC_sac_{env}-v2', f'SMC_redq_{env}-v2',
+                     f'sac_1_vanilla_{env}-v2',
                      f'vanilla_redQ_300_{env}-v2',
-                     f'vanilla_dropQ_300_{env}-v2',
-                     f'SMC_redq_{env}-v2']
-    steps_runs = [2000, 20000, 2000, 400000, 40000, 12_000_000]
+                     f'vanilla_dropQ_bias_300_{env}-v2',
+                     ]
+    steps_runs = [3_000, 30_000, 2_020_000, 3_000, 401_000, 41_000]
+    labes = ["Ours", "SMR-SAC", "SMR-RedQ", "SAC", "RedQ", "DroQ"]
     steps_runs = dict(zip(eval_runs, steps_runs))
+    labels = dict(zip(eval_runs, labes))
 
     history_dict = dict(zip(eval_runs, [[] for _ in eval_runs]))
     # To store the standard deviations
@@ -48,7 +52,9 @@ for j, env in enumerate(envs):
         if run.state == "finished" and run.name in eval_runs:
             print(run.name)
             # Extract historical data with steps and EvalReward
-            rewards = run.history(keys=["EvalReward"]).to_numpy()[:, 1]
+
+            rewards = run.history(keys=["EvalReward"], samples=750).to_numpy()[:, 1]
+
             history_dict[run.name].append(rewards)
 
     # Compute mean and standard deviation for each run
@@ -78,79 +84,74 @@ for j, env in enumerate(envs):
 
             # Convert the list of arrays to a single numpy array
             rewards_array = np.array(a)
-        mean_rewards = rewards_array.mean(0)[5:durations[j]]
-        std_rewards = rewards_array.std(0)[5:durations[j]]  # Calculate standard deviation
+        mean_rewards = rewards_array.mean(0)[5:]
+        std_rewards = rewards_array.std(0)[5:]  # Calculate standard deviation
         mean_rewards = exponential_moving_average(mean_rewards)
+        std_rewards = exponential_moving_average(std_rewards)
         # Update the dictionaries
         history_dict[run] = mean_rewards
         std_dict[run] = std_rewards
 
     # Convert history_dict to DataFrame for plotting means
-    history_df = pd.DataFrame.from_dict(history_dict)
+    # history_df = pd.DataFrame.from_dict(history_dict)
     # Plot EvalReward mean over steps for each run
     from scipy.interpolate import interp1d
 
+    last_step = 0
     # Plot EvalReward mean over steps for each run
     plt.figure(figsize=(12, 8), dpi=300)  # Increase dimensions and resolution
     for run in eval_runs:
-        if run not in [f'10K_75K_bias_dropQ_{env}-v2', f'10K_75K_bias_dropQ_300_{env}-v2']:
+        if "10K_75K" not in run:
             steps = np.arange(len(history_dict[run]) * steps_runs[run], step=steps_runs[run])
         else:
-            lomosteps = np.arange(len(history_dict[run]) * steps_runs[run], step=steps_runs[run])
+            # lomosteps = np.arange(len(history_dict[run]) * steps_runs[run], step=steps_runs[run])
+            #
+            # for i in range(int((len(history_dict[run]) - 5) / 10) - 1):
+            #     lomosteps[(i + 1) * 10:] = lomosteps[(i + 1) * 10:] + 150000
+            # steps = np.array(lomosteps)
+            # last_step = steps[-1]
 
-            # Interpolation for special runs with jumps
-            new_lomosteps = []
-            new_history = []
-            new_std = []  # To store interpolated std deviations
+            steps = np.zeros(len(history_dict[run]))
 
-            for i in range(int((len(history_dict[run]) - 5) / 10) - 1):
-                lomosteps[(i + 1) * 10:] = lomosteps[(i + 1) * 10:] + 150000
+            start = 5
+            for i in range(5):
+                steps[i:] += 3000
+            # Continue until we reach the end of the array
+            while start < len(steps):
+                # Iterate over the next 10 elements
+                for i in range(start, min(start + 15, len(steps))):
+                    steps[i:] += 10000
+                for i in range(start+15, min(start + 25, len(steps))):
+                    steps[i:] += 3000
+                # Skip 75 elements
+                start += 25  # Move 10 forward and skip 75
+            # steps = np.arange(5_400_000, step=5_400_000 / len(history_dict[run]))
+            last_step = steps[-1]
 
-                # Linear interpolation between steps, corresponding history, and std values
-                start_idx = (i + 1) * 10 - 1  # Last point before the jump
-                end_idx = (i + 1) * 10  # First point after the jump
-
-                # Add original values before interpolation
-                new_lomosteps.extend(lomosteps[end_idx - 10:end_idx])
-                new_history.extend(history_dict[run][end_idx - 10:end_idx])
-                new_std.extend(std_dict[run][end_idx - 10:end_idx])  # Add std values for original points
-
-                # Linear interpolation between steps and corresponding history and std
-                interpolated_steps = np.linspace(lomosteps[start_idx], lomosteps[end_idx], 10)
-                interpolated_history = np.linspace(history_dict[run][start_idx], history_dict[run][end_idx], 10)
-                interpolated_std = np.linspace(std_dict[run][start_idx], std_dict[run][end_idx], 10)
-
-                # Add small noise to the interpolated history and std values
-                noise_history = np.random.normal(0, 0.01 * np.abs(interpolated_history),
-                                                 len(interpolated_history))
-                noise_std = np.random.normal(0, 0.01 * np.abs(interpolated_std), len(interpolated_std))
-
-                interpolated_history += noise_history
-                interpolated_std += noise_std
-
-                # Add interpolated values (excluding the start and end points to avoid duplicates)
-                new_lomosteps.extend(interpolated_steps[1:-1])
-                new_history.extend(interpolated_history[1:-1])
-                new_std.extend(interpolated_std[1:-1])
-
-            # Ensure steps, history, and std are the final modified lists
-            steps = np.array(new_lomosteps)
-            history_dict[run] = np.array(new_history)
-            std_dict[run] = np.array(new_std)  # Update std_dict with interpolated values
-
-        plt.plot(steps, history_dict[run], label=run)
+        plt.plot(steps, history_dict[run], label=labels[run], linewidth=6.0)
 
         # Add variance (standard deviation) as shaded region
         plt.fill_between(steps, history_dict[run] - std_dict[run],
-                         history_dict[run] + std_dict[run], alpha=0.2)
+                         history_dict[run] + std_dict[run], alpha=0.4)
 
     # Add plot details
-    plt.xlabel('Gradient Steps')
-    plt.ylabel('EvalReward')
+    if env == "Walker2d":
+        plt.xlabel('Log Gradient Steps', fontsize=24)
+    # plt.ylabel('EvalReward')
+
+    print(last_step)
+    plt.axvline(x=last_step, color='black', lw=4)
+    plt.ylabel('EvalReward', fontsize=24)
     plt.xscale('log')
-    # plt.xlim(0, durations[j] * 1000 + int((durations[j] / 10)-1)*75000)
-    plt.title(env)
-    plt.legend(loc='upper left')
-    plt.grid(True)
+    # plt.xlim(0,last_step)
+    # plt.title(env)
+    # plt.legend(loc='upper left')
+    # plt.grid(True)
+    plt.xticks(fontsize=24)
+    plt.yticks(fontsize=24)
+    plt.grid(True, which="both", ls="-")
+    import matplotlib as mpl
+    plt.ylim(bottom=0 )
+    mpl.rcParams['axes.linewidth'] = 2
     plt.tight_layout()
-    plt.savefig(os.path.join(save_dir, f'{exp_name}_{env}.png'))
+    plt.savefig(os.path.join(save_dir, f'{exp_name}_{env}.pdf'), bbox_inches='tight')

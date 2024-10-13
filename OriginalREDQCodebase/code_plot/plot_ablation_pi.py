@@ -10,13 +10,13 @@ api = wandb.Api()
 
 # Project is specified by <entity/project-name>
 runs = api.runs("girolamomacaluso/lomo")
-envs = [ "Hopper", "Humanoid", "Walker2d", "Ant"] #"HalfCheetah",
+envs = ["Humanoid", ]
 durations = [300, 300, 300, 300, 300]  # ,
 save_dir = "/home/ganjiro/PycharmProjects/dropRL/DropQ/OriginalREDQCodebase/plots"
-exp_name = "comparison"
+exp_name = "alb_pi"
 
 
-def exponential_moving_average(data, alpha=0.15):
+def exponential_moving_average(data, alpha=0.1):
     ema = [data[0]]  # initialize with the first value
     for value in data[1:]:
         ema.append(ema[-1] * (1 - alpha) + alpha * value)
@@ -24,19 +24,14 @@ def exponential_moving_average(data, alpha=0.15):
 
 
 for j, env in enumerate(envs):
-    if env not in ["Hopper", "HalfCheetah"]:
-        eval_runs = [f'10K_75K_bias_dropQ_{env}-v2', f'SMC_sac_{env}-v2', f'SMC_redq_{env}-v2',
-                     f'sac_1_vanilla_{env}-v2',
-                     f'vanilla_redQ_{env}-v2',
-                     f'vanilla_dropQ_bias_{env}-v2',
-                     ]
-    else:
-        eval_runs = [f'10K_75K_bias_dropQ_300_{env}-v2', f'SMC_sac_{env}-v2', f'SMC_redq_{env}-v2',
-                     f'sac_1_vanilla_{env}-v2',
-                     f'vanilla_redQ_300_{env}-v2',
-                     f'vanilla_dropQ_bias_300_{env}-v2',
-                     ]
-    labes = ["Ours", "SMR-SAC", "SMR-RedQ", "SAC", "RedQ", "DroQ"]
+
+    eval_runs = [f'10K_75K_bias_dropQ_{env}-v2',
+                 f'abl_pi_{env}-v2',
+                 f'abl_q_pi_{env}-v2',
+
+
+                 ]
+    labes = ["Ours", "Only Policy", "Policy and Q-Function",]  # "RedQ UTD 20", "RedQ UTD 9",             "RedQ UTD 3", "RedQ UTD 2"
 
     lables = dict(zip(eval_runs, labes))
     history_dict = dict(zip(eval_runs, [[] for _ in eval_runs]))
@@ -103,32 +98,23 @@ for j, env in enumerate(envs):
     rcParams.update({'figure.autolayout': True})
 
     # Add plot details
-    if env == "Walker2d":
-        plt.xlabel('Environment Steps', fontsize=24)
+    # if env == "Walker2d":
+    plt.xlabel('Environment Steps', fontsize=24)
 
-    # plt.ylabel('EvalReward', fontsize=24)
+    plt.ylabel('EvalReward', fontsize=24)
 
-    # plt.title(env, rotation='vertical', x=-0.16, y=0.3, fontsize=24, weight='bold')
-
+    # plt.title(, rotation='vertical', x=-0.16, y=0.4, fontsize=22, weight='bold')
 
     # if env == "Ant":
-    #
-    #     leg = plt.legend(loc='upper left', fontsize=30)
-    #
-    #
-    #     # change the line width for the legend
-    #     for line in leg.get_lines():
-    #         line.set_linewidth(8.0)
-
-
+    leg = plt.legend(loc='upper left', fontsize=24)
+    # change the line width for the legend
+    for line in leg.get_lines():
+        line.set_linewidth(6.0)
     import matplotlib as mpl
 
     mpl.rcParams['axes.linewidth'] = 2
-
     plt.xticks(ticks=np.array([0, 50000, 150_000, 250_000]), fontsize=24)
-    plt.yticks(fontsize=24)
-    # plt.ylim(0, 3800 )
-    plt.ylim(bottom=0 )
+    plt.yticks(fontsize=20)
     plt.grid(True)
     # plt.tight_layout()
     plt.savefig(os.path.join(save_dir, f'{exp_name}_{env}.pdf'), bbox_inches='tight')

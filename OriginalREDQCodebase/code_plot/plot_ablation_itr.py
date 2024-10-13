@@ -10,13 +10,13 @@ api = wandb.Api()
 
 # Project is specified by <entity/project-name>
 runs = api.runs("girolamomacaluso/lomo")
-envs = [ "Hopper", "Humanoid", "Walker2d", "Ant"] #"HalfCheetah",
+envs = ["Humanoid", ]
 durations = [300, 300, 300, 300, 300]  # ,
 save_dir = "/home/ganjiro/PycharmProjects/dropRL/DropQ/OriginalREDQCodebase/plots"
-exp_name = "comparison"
+exp_name = "alb_itr"
 
 
-def exponential_moving_average(data, alpha=0.15):
+def exponential_moving_average(data, alpha=0.1):
     ema = [data[0]]  # initialize with the first value
     for value in data[1:]:
         ema.append(ema[-1] * (1 - alpha) + alpha * value)
@@ -24,21 +24,18 @@ def exponential_moving_average(data, alpha=0.15):
 
 
 for j, env in enumerate(envs):
-    if env not in ["Hopper", "HalfCheetah"]:
-        eval_runs = [f'10K_75K_bias_dropQ_{env}-v2', f'SMC_sac_{env}-v2', f'SMC_redq_{env}-v2',
-                     f'sac_1_vanilla_{env}-v2',
-                     f'vanilla_redQ_{env}-v2',
-                     f'vanilla_dropQ_bias_{env}-v2',
-                     ]
-    else:
-        eval_runs = [f'10K_75K_bias_dropQ_300_{env}-v2', f'SMC_sac_{env}-v2', f'SMC_redq_{env}-v2',
-                     f'sac_1_vanilla_{env}-v2',
-                     f'vanilla_redQ_300_{env}-v2',
-                     f'vanilla_dropQ_bias_300_{env}-v2',
-                     ]
-    labes = ["Ours", "SMR-SAC", "SMR-RedQ", "SAC", "RedQ", "DroQ"]
 
+    eval_runs = [f'10K_200K_bias_dropQ_{env}-v2',
+                 f'10K_100K_bias_dropQ_{env}-v2',
+                 f'10K_75K_bias_dropQ_{env}-v2',
+                 f'10K_50K_bias_dropQ_{env}-v2',
+                 f'10K_20K_bias_dropQ_{env}-v2',
+                 f'10K_10K_bias_dropQ_{env}-v2',
+                 ]
+    labes = ["200K", "100K", "75K (Ours)", "50K", "20K", "10K"]
+    colors = ['#2ca02c', '#ff7f0e', '#1f77b4', '#d62728', '#9467bd', '#8c564b']
     lables = dict(zip(eval_runs, labes))
+    colors = dict(zip(eval_runs, colors))
     history_dict = dict(zip(eval_runs, [[] for _ in eval_runs]))
     # To store the standard deviations
     std_dict = dict(zip(eval_runs, [[] for _ in eval_runs]))
@@ -94,41 +91,32 @@ for j, env in enumerate(envs):
     plt.figure(figsize=(12, 8), dpi=300)  # Increase dimensions and resolution
     for run in eval_runs:
         steps = np.arange(len(history_dict[run]) * 1000, step=1000)
-        plt.plot(steps, history_dict[run], label=lables[run], linewidth=6.0)
+        plt.plot(steps, history_dict[run], label=lables[run], linewidth=6.0, color=colors[run])
         # Add variance (standard deviation) as shaded region
         plt.fill_between(steps, history_dict[run] - std_dict[run],
-                         history_dict[run] + std_dict[run], alpha=0.4)
+                         history_dict[run] + std_dict[run], alpha=0.4, color=colors[run])
     from matplotlib import rcParams
 
     rcParams.update({'figure.autolayout': True})
 
     # Add plot details
-    if env == "Walker2d":
-        plt.xlabel('Environment Steps', fontsize=24)
+    # if env == "Walker2d":
+    plt.xlabel('Environment Steps', fontsize=24)
 
-    # plt.ylabel('EvalReward', fontsize=24)
+    plt.ylabel('EvalReward', fontsize=24)
 
-    # plt.title(env, rotation='vertical', x=-0.16, y=0.3, fontsize=24, weight='bold')
-
+    # plt.title(, rotation='vertical', x=-0.16, y=0.4, fontsize=22, weight='bold')
 
     # if env == "Ant":
-    #
-    #     leg = plt.legend(loc='upper left', fontsize=30)
-    #
-    #
-    #     # change the line width for the legend
-    #     for line in leg.get_lines():
-    #         line.set_linewidth(8.0)
-
-
+    leg = plt.legend(loc='upper left', fontsize=24)
+    # change the line width for the legend
+    for line in leg.get_lines():
+        line.set_linewidth(6.0)
     import matplotlib as mpl
 
     mpl.rcParams['axes.linewidth'] = 2
-
     plt.xticks(ticks=np.array([0, 50000, 150_000, 250_000]), fontsize=24)
-    plt.yticks(fontsize=24)
-    # plt.ylim(0, 3800 )
-    plt.ylim(bottom=0 )
+    plt.yticks(fontsize=20)
     plt.grid(True)
     # plt.tight_layout()
     plt.savefig(os.path.join(save_dir, f'{exp_name}_{env}.pdf'), bbox_inches='tight')
