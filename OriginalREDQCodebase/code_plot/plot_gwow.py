@@ -36,7 +36,7 @@ for j, env in enumerate(envs):
                      f'vanilla_redQ_300_{env}-v2',
                      f'vanilla_dropQ_bias_300_{env}-v2',
                      ]
-    labes = ["Ours", "SMR-SAC", "SMR-RedQ", "SAC", "RedQ", "DroQ"]
+    labes = ["SPEQ (Ours)", "SMR-SAC", "SMR-RedQ", "SAC", "RedQ", "DroQ"]
 
     lables = dict(zip(eval_runs, labes))
     history_dict = dict(zip(eval_runs, [[] for _ in eval_runs]))
@@ -104,7 +104,7 @@ for j, env in enumerate(envs):
 
     # Add plot details
     if env == "Walker2d":
-        plt.xlabel('Environment Steps', fontsize=24)
+        plt.xlabel('Environment Steps', fontsize=40)
 
     # plt.ylabel('EvalReward', fontsize=24)
 
@@ -120,13 +120,27 @@ for j, env in enumerate(envs):
     #     for line in leg.get_lines():
     #         line.set_linewidth(8.0)
 
+    def format_ticks(value, tick_number):
+        if value == 0:
+            return ''  # Skip 0
+        return f'{int(value / 1000)}k'
+
+
+    import matplotlib.ticker as mticker
+
+    # Get the current axes and apply the formatter to the x-axis
 
     import matplotlib as mpl
 
     mpl.rcParams['axes.linewidth'] = 2
 
-    plt.xticks(ticks=np.array([0, 50000, 150_000, 250_000]), fontsize=24)
-    plt.yticks(fontsize=24)
+    plt.xticks(ticks=np.array([0, 50000, 150_000, 250_000]), fontsize=30)
+    plt.yticks(fontsize=30)
+    plt.gca().yaxis.set_major_formatter(mticker.FuncFormatter(format_ticks))
+
+    # Set automatic ticks only at multiples of 1000
+    plt.gca().yaxis.set_major_locator(mticker.MultipleLocator(1000))
+    plt.xlim(0, 295_000)
     # plt.ylim(0, 3800 )
     plt.ylim(bottom=0 )
     plt.grid(True)

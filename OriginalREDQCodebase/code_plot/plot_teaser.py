@@ -32,7 +32,7 @@ eval_runs = [f'10K_75K_bias_dropQ_', f'SMC_sac_', f'SMC_redq_',
              ]
 
 steps_runs = [3_000, 30_000, 2_020_000, 3_000, 401_000, 41_000]
-labes = ["Ours", "SMR-SAC", "SMR-RedQ", "SAC", "RedQ", "DroQ"]
+labes = ["SPEQ (Ours)", "SMR-SAC", "SMR-RedQ", "SAC", "RedQ", "DroQ"]
 steps_runs = dict(zip(eval_runs, steps_runs))
 labels = dict(zip(eval_runs, labes))
 
@@ -42,7 +42,7 @@ std_dict = dict(zip(eval_runs, [[] for _ in eval_runs]))
 
 # Iterate through runs and extract relevant data
 for run in runs:
-    if run.state == "finished" and "HalfCheetah" not in run.name and any(
+    if run.state == "finished" and "HalfCheetah" not in run.name and "Hopper" not in run.name and any(
             substring in run.name for substring in eval_runs):
         print(run.name)
         # Extract historical data with steps and EvalReward
@@ -110,26 +110,41 @@ for run in eval_runs:
     plt.fill_between(steps, history_dict[run] - std_dict[run],
                      history_dict[run] + std_dict[run], alpha=0.4)
 
-# Add plot details
-# if env == "Walker2d":
-plt.xlabel('Gradient Steps', fontsize=24)
-plt.ylabel('EvalReward', fontsize=24)
+print(last_step)
+plt.axvline(x=last_step, color='black', lw=4)
+plt.ylabel('EvalReward', fontsize=30)
 plt.xscale('log')
-
-leg = plt.legend(loc='upper left', fontsize=30)
-
-# change the line width for the legend
-for line in leg.get_lines():
-    line.set_linewidth(8.0)
-# plt.xlim(0, last_step)
+plt.xlim(100000, 600_000_000)
+plt.xlabel('Gradient Steps', fontsize=30)
+# plt.xlim(0,last_step)
 # plt.title(env)
 # plt.legend(loc='upper left')
 # plt.grid(True)
-plt.xticks(fontsize=24)
-plt.yticks(fontsize=24)
-plt.grid(True, which="both", ls="-")
+plt.xticks(fontsize=30)
+plt.yticks(fontsize=30)
+# plt.grid(True, which="both", ls="-")
 import matplotlib as mpl
 
+plt.grid(True)
+
+
+def format_ticks(value, tick_number):
+    if value == 0:
+        return ''  # Skip 0
+    return f'{int(value / 1000)}k'
+
+
+import matplotlib.ticker as mticker
+
+# Get the current axes and apply the formatter to the x-axis
+plt.gca().yaxis.set_major_formatter(mticker.FuncFormatter(format_ticks))
+leg = plt.legend(loc='upper left', fontsize=25)
+# change the line width for the legend
+for line in leg.get_lines():
+    line.set_linewidth(6.0)
+# Set automatic ticks only at multiples of 1000
+plt.gca().yaxis.set_major_locator(mticker.MultipleLocator(1000))
+plt.ylim(0)
 mpl.rcParams['axes.linewidth'] = 3
 plt.tight_layout()
-plt.savefig(os.path.join(save_dir, f'{exp_name}.svg'), bbox_inches='tight', )
+plt.savefig(os.path.join(save_dir, f'{exp_name}.pdf'), bbox_inches='tight', )

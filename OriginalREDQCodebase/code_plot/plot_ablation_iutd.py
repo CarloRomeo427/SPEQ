@@ -35,7 +35,7 @@ for j, env in enumerate(envs):
                  # f'utd_3-redQ_{env}-v2',
                  # f'utd_2-redQ_{env}-v2',
                  ]
-    labes = ["Ours", "DroQ UTD 20", "DroQ UTD 9", "DroQ UTD 3",
+    labes = ["SPEQ (Ours)", "DroQ UTD 20", "DroQ UTD 9", "DroQ UTD 3",
              "DroQ UTD 2", ]  # "RedQ UTD 20", "RedQ UTD 9",             "RedQ UTD 3", "RedQ UTD 2"
 
     lables = dict(zip(eval_runs, labes))

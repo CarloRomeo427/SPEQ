@@ -13,7 +13,7 @@ import sys
 
 import wandb
 
-from redq.algos.redq_sac_o2 import REDQSACAgent
+from redq.algos.redq_sac_o2_fast import REDQSACAgent
 from redq.algos.core import mbpo_epoches, test_agent
 from redq.utils.run_utils import setup_logger_kwargs
 from redq.utils.bias_utils import log_bias_evaluation

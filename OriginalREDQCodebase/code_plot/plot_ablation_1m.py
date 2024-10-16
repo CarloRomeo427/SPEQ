@@ -10,13 +10,13 @@ api = wandb.Api()
 
 # Project is specified by <entity/project-name>
 runs = api.runs("girolamomacaluso/lomo")
-envs = ["Humanoid", ]
-# durations = [300, 300, 300, 300, 300]  # ,
+envs = ["Ant", ]
+durations = [300, 300, 300, 300, 300]  # ,
 save_dir = "/home/ganjiro/PycharmProjects/dropRL/DropQ/OriginalREDQCodebase/plots"
-exp_name = "alb_freq"
+exp_name = "alb_1M"
 
 
-def exponential_moving_average(data, alpha=0.1):
+def exponential_moving_average(data, alpha=0.2):
     ema = [data[0]]  # initialize with the first value
     for value in data[1:]:
         ema.append(ema[-1] * (1 - alpha) + alpha * value)
@@ -25,25 +25,25 @@ def exponential_moving_average(data, alpha=0.1):
 
 for j, env in enumerate(envs):
 
-    eval_runs = [f'abl_freq_5000-dropQ_{env}-v2',
-                 f'10K_75K_bias_dropQ_{env}-v2',
-                 f'abl_freq_50000-dropQ_{env}-v2',
-                 f'abl_freq_100000-dropQ_{env}-v2',
+    eval_runs = [f'10K_75K_dropq_1M_{env}-v2',
+                 f'vanilla_dropQ_1M_{env}-v2',
+                 f'vanilla_redQ_1M_{env}-v2',
+
                  ]
-    labes = ["5K", "10K (Ours)", "50K", "100K"]
-    colors = ['#2ca02c', '#1f77b4', '#d62728', '#9467bd', '#8c564b']
+    labes = ["SPEQ (Ours)", "DroQ",
+             "RedQ", ]  # "RedQ UTD 20", "RedQ UTD 9",             "RedQ UTD 3", "RedQ UTD 2"
+
     lables = dict(zip(eval_runs, labes))
-    colors = dict(zip(eval_runs, colors))
     history_dict = dict(zip(eval_runs, [[] for _ in eval_runs]))
     # To store the standard deviations
     std_dict = dict(zip(eval_runs, [[] for _ in eval_runs]))
 
     # Iterate through runs and extract relevant data
     for run in runs:
-        if run.state == "finished" and run.name in eval_runs:
+        if (run.state == "finished" or ("red" in run.name and "good" in run.tags)) and run.name in eval_runs:
             print(run.name)
             # Extract historical data with steps and EvalReward
-            rewards = run.history(keys=["EvalReward"], samples=750).to_numpy()[:, 1]
+            rewards = run.history(keys=["EvalReward"], samples=10000).to_numpy()[:, 1]
             history_dict[run.name].append(rewards)
 
     # Compute mean and standard deviation for each run
@@ -81,17 +81,18 @@ for j, env in enumerate(envs):
         history_dict[run] = mean_rewards
         std_dict[run] = std_rewards
 
-
+    # Convert history_dict to DataFrame for plotting means
+    # history_df = pd.DataFrame.from_dict(history_dict)
     # Plot EvalReward mean over steps for each run
 
     # Plot EvalReward mean over steps for each run
     plt.figure(figsize=(12, 8), dpi=300)  # Increase dimensions and resolution
     for run in eval_runs:
-        steps = np.arange(300_000, step=300_000 / len(history_dict[run]))
-        plt.plot(steps, history_dict[run], label=lables[run], linewidth=6.0, color=colors[run])
+        steps = np.arange(1_000_000, step=1_000_000 / len(history_dict[run]))
+        plt.plot(steps, history_dict[run], label=lables[run], linewidth=6.0)
         # Add variance (standard deviation) as shaded region
         plt.fill_between(steps, history_dict[run] - std_dict[run],
-                         history_dict[run] + std_dict[run], alpha=0.4, color=colors[run])
+                         history_dict[run] + std_dict[run], alpha=0.4)
     from matplotlib import rcParams
 
     rcParams.update({'figure.autolayout': True})
@@ -101,15 +102,17 @@ for j, env in enumerate(envs):
     plt.xlabel('Environment Steps', fontsize=30)
 
     plt.ylabel('EvalReward', fontsize=30)
-
-    # plt.title("Humanoid", fontsize=26)
-    plt.xlim(0, 295_000)
+    # plt.title("Humanoid", fontsize=30)
+    # plt.title(, rotation='vertical', x=-0.16, y=0.4, fontsize=22, weight='bold')
+    plt.axvline(x=300_000, color='black', lw=4)
     # if env == "Ant":
     leg = plt.legend(loc='upper left', fontsize=30)
     # change the line width for the legend
     for line in leg.get_lines():
         line.set_linewidth(6.0)
     import matplotlib as mpl
+
+
     def format_ticks(value, tick_number):
         if value == 0:
             return ''  # Skip 0
@@ -120,8 +123,9 @@ for j, env in enumerate(envs):
 
     plt.gca().yaxis.set_major_formatter(mticker.FuncFormatter(format_ticks))
     mpl.rcParams['axes.linewidth'] = 2
-    plt.xticks(ticks=np.array([0, 50000, 150_000, 250_000]), fontsize=30)
+    plt.xticks(ticks=np.array([0, 250_000, 500_000, 750_000, ]), fontsize=30)
     plt.yticks(fontsize=30)
     plt.grid(True)
+    plt.xlim(0, 1_000_000)
     # plt.tight_layout()
     plt.savefig(os.path.join(save_dir, f'{exp_name}_{env}.pdf'), bbox_inches='tight')
