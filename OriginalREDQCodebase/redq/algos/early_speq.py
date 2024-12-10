@@ -1,5 +1,4 @@
 import copy
-
 import numpy as np
 import torch
 from torch import Tensor
@@ -32,9 +31,9 @@ class REDQSACAgent(object):
                  alpha=0.2, auto_alpha=True, target_entropy='mbpo',
                  start_steps=5000, delay_update_steps='auto',
                  utd_ratio=20, num_Q=10, num_min=2, q_target_mode='min',
-                 policy_update_delay=20, expectile=0.5,
-                 target_drop_rate=0.0, layer_norm=False, offlineBuffer="prioritized", policy_type='default',
-                 utd_ratio_offline=None, policy_polyak_update=False, reset_q=False, policy_frequency=-1):
+                 policy_update_delay=20,
+                 target_drop_rate=0.0, layer_norm=False,
+                 utd_ratio_offline=None):
         self.policy_net = TanhGaussianPolicy(obs_dim, act_dim, (256, 256), action_limit=act_limit).to(device)
         self.q_net_list, self.q_target_net_list = [], []
         for q_i in range(num_Q):
@@ -65,6 +64,7 @@ class REDQSACAgent(object):
             self.alpha = alpha
             self.target_entropy, self.log_alpha, self.alpha_optim = None, None, None
         self.replay_buffer = ReplayBuffer(obs_dim=obs_dim, act_dim=act_dim, size=replay_size)
+        self.val_replay_buffer = ReplayBuffer(obs_dim=obs_dim, act_dim=act_dim, size=replay_size)
         self.mse_criterion = nn.MSELoss()
         self.start_steps = start_steps
         self.obs_dim = obs_dim
@@ -84,15 +84,9 @@ class REDQSACAgent(object):
         self.q_target_mode = q_target_mode
         self.policy_update_delay = policy_update_delay
         self.device = device
-        self.expectile = expectile
-        self.offlineBuffer = offlineBuffer
-        self.policy_type = policy_type
-        self.policy_polyak_update = policy_polyak_update
         self.utd_ratio_offline = utd_ratio_offline if utd_ratio_offline else utd_ratio
-        self.reset_q = reset_q
         self.target_drop_rate = target_drop_rate
         self.layer_norm = layer_norm
-        self.policy_frequency = policy_frequency
 
     def __get_current_num_data(self):
         return self.replay_buffer.size
@@ -133,6 +127,9 @@ class REDQSACAgent(object):
 
     def store_data(self, o, a, r, o2, d):
         self.replay_buffer.store(o, a, r, o2, d)
+
+    def store_val_data(self, o, a, r, o2, d):
+        self.val_replay_buffer.store(o, a, r, o2, d)
 
     def sample_data(self, batch_size):
         batch = self.replay_buffer.sample_batch(batch_size)
@@ -261,46 +258,67 @@ class REDQSACAgent(object):
 
             if i_update == num_update - 1:
                 logger.store(LossPi=policy_loss.cpu().item(), LossQ1=q_loss_all.cpu().item() / self.num_Q,
-                             LossAlpha=alpha_loss.cpu().item(), Q1Vals=q_prediction.detach().cpu().numpy(),
+                             LossAlpha=alpha_loss.cpu().item(),
+                             Q1Vals=q_prediction.detach().cpu().numpy(),  # NOTE: use parentheses for .numpy()
                              Alpha=self.alpha, LogPi=log_prob_a_tilda.detach().cpu().numpy(),
                              PreTanh=pretanh.abs().detach().cpu().numpy().reshape(-1))
 
-                wandb.log({"policy_loss": policy_loss.cpu().item(), "mean_loss_q": q_loss_all.cpu().item() / self.num_Q
-                           })
+                wandb.log({"policy_loss": policy_loss.cpu().item(),
+                           "mean_loss_q": q_loss_all.cpu().item() / self.num_Q})
 
         if num_update == 0:
             logger.store(LossPi=0, LossQ1=0, LossAlpha=0, Q1Vals=0, Alpha=0, LogPi=0, PreTanh=0)
 
-    @staticmethod
-    def expectile_loss(diff, expectile=0.8):
-        weight = torch.where(diff > 0, expectile, (1 - expectile))
-        return weight * (diff ** 2)
+    def finetune_offline(self, epochs, test_env=None):
+        num_update = 0 if self.__get_current_num_data() <= self.delay_update_steps else self.utd_ratio_offline
+        initial_val_loss = self.evaluate_validation_loss(batch_size=self.batch_size)
+        wandb.log({'ValQloss': initial_val_loss})
+        steps_since_last_check = 0
+        for e in range(epochs):
+            
+            obs_tensor, obs_next_tensor, acts_tensor, rews_tensor, done_tensor = self.sample_data(self.batch_size)
 
-    def reset(self):
-        self.q_net_list, self.q_target_net_list = [], []
-        for q_i in range(self.num_Q):
-            new_q_net = Mlp(self.obs_dim + self.act_dim, 1, self.hidden_sizes, target_drop_rate=self.target_drop_rate,
-                            layer_norm=self.layer_norm).to(self.device)
-            self.q_net_list.append(new_q_net)
-            new_q_target_net = Mlp(self.obs_dim + self.act_dim, 1, self.hidden_sizes,
-                                   target_drop_rate=self.target_drop_rate,
-                                   layer_norm=self.layer_norm).to(self.device)
-            new_q_target_net.load_state_dict(new_q_net.state_dict())
-            self.q_target_net_list.append(new_q_target_net)
+            """Q loss"""
+            y_q, sample_idxs = self.get_redq_q_target_no_grad(obs_next_tensor, rews_tensor, done_tensor)
+            q_prediction_list = []
+            for q_i in range(self.num_Q):
+                q_prediction = self.q_net_list[q_i](torch.cat([obs_tensor, acts_tensor], 1))
+                q_prediction_list.append(q_prediction)
+            q_prediction_cat = torch.cat(q_prediction_list, dim=1)
+            y_q = y_q.expand((-1, self.num_Q)) if y_q.shape[1] == 1 else y_q
 
-        self.q_optimizer_list = [optim.Adam(q.parameters(), lr=self.lr) for q in self.q_net_list]
+            # Revert to MSE loss
+            q_loss_all = self.mse_criterion(q_prediction_cat, y_q) * self.num_Q
 
-        # self.policy_net = TanhGaussianPolicy(self.obs_dim, self.act_dim, (256, 256),
-        #                                     action_limit=self.act_limit).to(self.device)
-        # self.policy_optimizer = optim.Adam(self.policy_net.parameters(), lr=self.lr)
+            for q_i in range(self.num_Q):
+                self.q_optimizer_list[q_i].zero_grad()
+            q_loss_all.backward()
+            for q_i in range(self.num_Q):
+                self.q_optimizer_list[q_i].step()
+
+            for q_i in range(self.num_Q):
+                soft_update_model1_with_model2(self.q_target_net_list[q_i], self.q_net_list[q_i], self.polyak)
+
+            steps_since_last_check += 1
+
+            # Check validation loss after a certain interval
+            if steps_since_last_check >= 1000:
+                current_val_loss = self.evaluate_validation_loss(batch_size=self.batch_size)
+                wandb.log({'ValQloss': current_val_loss})
+                steps_since_last_check = 0
 
 
-    def evaluate_validation_loss(self, batch_size=256):
+                
+
+    def evaluate_validation_loss(self, batch_size=256, heldout_ratio=0.0):
         """
         Evaluate Q-loss on the entire validation replay buffer by iterating over it in batches.
         Returns the average Q-loss across all validation data.
         """
-        val_data = self.replay_buffer.sample_all()
+        if heldout_ratio > 0.0:
+            val_data = self.val_replay_buffer.sample_all()
+        else:
+            val_data = self.replay_buffer.sample_all()
         obs_full = val_data['obs1']
         obs_next_full = val_data['obs2']
         acts_full = val_data['acts']
@@ -340,121 +358,98 @@ class REDQSACAgent(object):
         average_loss = total_loss / num_batches
         return average_loss
 
-    def finetune_offline(self, epochs, x, test_env=None):
-        """ Finetune the model on the top x% of the data """
+    def early_finetuning(self, epochs, threshold, improvement=0.05, patience=5, check_interval=1000, heldout_ratio=0.0):
+        """
+        Offline fine-tuning with a two-phase early stopping:
+        
+        Phase 1: Continue training until current_val_loss < initial_val_loss * x (lower_bound).
+        Phase 2: Once lower_bound is reached at least once, 
+                require 5% improvement over the previous best to continue.
+                If no 5% improvement for `patience` checks, stop early.
+        """
 
-        num_update = 0 if self.__get_current_num_data() <= self.delay_update_steps else self.utd_ratio_offline
-        initial_loss = self.evaluate_validation_loss()
-        wandb.log({"ValLoss": initial_loss})
-        # if self.reset_q:
-        #     self.reset()
+        initial_val_loss = self.evaluate_validation_loss(batch_size=self.batch_size, heldout_ratio=heldout_ratio)
+        lower_bound = initial_val_loss * threshold
+        if heldout_ratio > 0.0:
+            wandb.log({'ValDSSize': self.val_replay_buffer.size})
+        else:
+            wandb.log({'ValDSSize': self.replay_buffer.size})
 
-        if self.offlineBuffer == "prioritized":
+        
 
-            filtered_batches = self.replay_buffer.filter_top_x_transitions(x)
-            for key in filtered_batches:
-                filtered_batches[key] = np.array(filtered_batches[key])
+        print(f"Initial validation Q-loss: {initial_val_loss:.4f}, Lower bound: {lower_bound:.4f}")
+        wandb.log({'ValQloss': initial_val_loss})
 
-        elif self.offlineBuffer == "random":
-            filtered_batches = self.replay_buffer.filter_top_x_percent(x)
-            for key in filtered_batches:
-                filtered_batches[key] = np.array(filtered_batches[key])
+        # Phase 1 tracking
+        threshold_reached = False
+        best_val_loss = None  # Will be set once threshold is reached
+
+        # Phase 2 tracking (once threshold is reached)
+        no_improvement_count = 0
+
+        steps_since_last_check = 0
+        last_epoch = 0
 
         for e in range(epochs):
-            if e % 1000 == 0:
-                val_loss = self.evaluate_validation_loss()
-                wandb.log({"ValLoss": val_loss})
-            if test_env and (e + 1) % 5000 == 0:
-                test_rw = test_agent(self, test_env, 1000, None)  # add logging here
-                wandb.log({"EvalReward": np.mean(test_rw)})
-            for i_update in range(num_update):
-                if self.policy_polyak_update:
-                    self.target_policy_net = copy.deepcopy(self.policy_net)
+            last_epoch = e
 
-                if self.offlineBuffer == "prioritized" or self.offlineBuffer == "random":
-                    idx_batch = np.random.choice(len(filtered_batches), self.batch_size)
-                    obs = filtered_batches['obs1'][idx_batch]
-                    obs_next = filtered_batches['obs2'][idx_batch]
-                    acts = filtered_batches['acts'][idx_batch]
-                    rews = filtered_batches['rews'][idx_batch]
-                    done = filtered_batches['done'][idx_batch]
+            # Sample a batch from main replay buffer
+            obs_tensor, obs_next_tensor, acts_tensor, rews_tensor, done_tensor = self.sample_data(self.batch_size)
 
-                    obs_tensor = Tensor(obs).to(self.device)
-                    obs_next_tensor = Tensor(obs_next).to(self.device)
-                    acts_tensor = Tensor(acts).to(self.device)
-                    rews_tensor = Tensor(rews).unsqueeze(1).to(self.device)
-                    done_tensor = Tensor(done).unsqueeze(1).to(self.device)
+            # Compute Q-loss on this batch with MSE
+            y_q, _ = self.get_redq_q_target_no_grad(obs_next_tensor, rews_tensor, done_tensor)
+            q_prediction_list = [
+                q_net(torch.cat([obs_tensor, acts_tensor], 1))
+                for q_net in self.q_net_list
+            ]
+            q_prediction_cat = torch.cat(q_prediction_list, dim=1)
+            y_q = y_q.expand((-1, self.num_Q)) if y_q.shape[1] == 1 else y_q
+            q_loss_all = self.mse_criterion(q_prediction_cat, y_q) * self.num_Q
 
-                elif self.offlineBuffer == "full":
-                    obs_tensor, obs_next_tensor, acts_tensor, rews_tensor, done_tensor = self.sample_data(
-                        self.batch_size)
+            # Update Q-networks
+            for q_i in range(self.num_Q):
+                self.q_optimizer_list[q_i].zero_grad()
+            q_loss_all.backward()
+            for q_i in range(self.num_Q):
+                self.q_optimizer_list[q_i].step()
+
+            # Soft update Q-target networks
+            for q_i in range(self.num_Q):
+                soft_update_model1_with_model2(self.q_target_net_list[q_i], self.q_net_list[q_i], self.polyak)
+
+            steps_since_last_check += 1
+
+            # Check validation loss after a certain interval
+            if steps_since_last_check >= check_interval:
+                current_val_loss = self.evaluate_validation_loss(batch_size=self.batch_size)
+                wandb.log({'ValQloss': current_val_loss})
+                steps_since_last_check = 0
+
+                if not threshold_reached:
+                    # Phase 1: Check if we've reached below lower_bound
+                    if current_val_loss < lower_bound:
+                        # Threshold reached, enter Phase 2
+                        threshold_reached = True
+                        best_val_loss = current_val_loss
+                        no_improvement_count = 0
+                        print(f"Reached lower bound at epoch {e}: current_val_loss {current_val_loss:.4f} < {lower_bound:.4f}")
                 else:
-                    raise NotImplementedError
-                
-
-                """Q loss"""
-                if self.policy_type != 'only':
-                    y_q, sample_idxs = self.get_redq_q_target_no_grad(obs_next_tensor, rews_tensor, done_tensor)
-                    q_prediction_list = []
-                    for q_i in range(self.num_Q):
-                        q_prediction = self.q_net_list[q_i](torch.cat([obs_tensor, acts_tensor], 1))
-                        q_prediction_list.append(q_prediction)
-                    q_prediction_cat = torch.cat(q_prediction_list, dim=1)
-                    y_q = y_q.expand((-1, self.num_Q)) if y_q.shape[1] == 1 else y_q
-                    q_loss_all = self.expectile_loss(q_prediction_cat - y_q,
-                                                     expectile=self.expectile).mean() * self.num_Q
-
-                    for q_i in range(self.num_Q):
-                        self.q_optimizer_list[q_i].zero_grad()
-                    q_loss_all.backward()
-
-                """policy loss"""
-                if ((((
-                              i_update + 1) % self.utd_ratio_offline == 0) or i_update == num_update - 1) and self.policy_type != 'None') \
-                        or (self.policy_frequency != -1 and (i_update + 1) % self.policy_frequency == 0):
-                    a_tilda, mean_a_tilda, log_std_a_tilda, log_prob_a_tilda, _, pretanh = self.policy_net.forward(
-                        obs_tensor)
-                    q_a_tilda_list = []
-                    for sample_idx in range(self.num_Q):
-                        self.q_net_list[sample_idx].requires_grad_(False)
-                        q_a_tilda = self.q_net_list[sample_idx](torch.cat([obs_tensor, a_tilda], 1))
-                        q_a_tilda_list.append(q_a_tilda)
-                    q_a_tilda_cat = torch.cat(q_a_tilda_list, 1)
-                    ave_q = torch.mean(q_a_tilda_cat, dim=1, keepdim=True)
-                    # print(f"SHAPES -> A pi: {self.policy_net.forward(obs_tensor, False, False)[0].shape}, A DB: {acts_tensor.shape}")
-                    # input()
-                    if (self.policy_type == 'default' or self.policy_type == 'None'):
-                        policy_loss = (self.alpha * log_prob_a_tilda - ave_q).mean()
-                    elif self.policy_type == 'bc':
-                        policy_loss = (self.alpha * log_prob_a_tilda - ave_q).mean() + 0.5 * F.mse_loss(a_tilda,
-                                                                                                        acts_tensor)
+                    # Phase 2: Check for significant improvements over best_val_loss
+                    # Must improve by at least 5%
+                    if current_val_loss < best_val_loss * (1 - improvement):
+                        # Significant improvement detected
+                        best_val_loss = current_val_loss
+                        no_improvement_count = 0
+                        print(f"Significant improvement at epoch {e}: new best_val_loss {best_val_loss:.4f}")
                     else:
-                        raise NotImplementedError
+                        # No significant improvement
+                        no_improvement_count += 1
+                        print(f"No significant improvement at epoch {e}: {no_improvement_count}/{patience}")
 
-                    # + F.mse_loss(self.policy_net.forward(obs_tensor, False, False)[0], acts_tensor)
-                    self.policy_optimizer.zero_grad()
-                    policy_loss.backward()
-                    for sample_idx in range(self.num_Q):
-                        self.q_net_list[sample_idx].requires_grad_(True)
+                        # If we have gone 'patience' checks with no improvement, stop early
+                        if no_improvement_count >= patience:
+                            wandb.log({'OffEpochs': e})
+                            print(f"Stopping early due to no 5% improvement for {no_improvement_count} checks.")
+                            return
 
-                for q_i in range(self.num_Q):
-                    self.q_optimizer_list[q_i].step()
-
-                if (((
-                             i_update + 1) % self.utd_ratio_offline == 0) or i_update == num_update - 1) and self.policy_type != 'None':
-                    self.policy_optimizer.step()
-
-                for q_i in range(self.num_Q):
-                    soft_update_model1_with_model2(self.q_target_net_list[q_i], self.q_net_list[q_i],
-                                                   self.polyak)
-                    # self.q_target_net_list[q_i] = copy.deepcopy(self.q_net_list[q_i])
-
-                if self.policy_polyak_update:
-                    soft_update_policy(self.target_policy_net, self.policy_net, self.polyak)
-                    # model2_param.data.copy_(rou*model1_param.data + (1-rou)*model2_param.data)
-
-                    # if i_update == num_update - 1:
-                    #     wandb.log(
-                    #         {"policy_loss_offline": policy_loss.cpu().item(),
-                    #          "mean_loss_q_offline": q_loss_all.cpu().item() / self.num_Q
-                    #          })
+        wandb.log({'OffEpochs': last_epoch})

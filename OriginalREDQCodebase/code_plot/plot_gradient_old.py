@@ -39,7 +39,7 @@ for j, env in enumerate(envs):
                      f'vanilla_dropQ_bias_300{env}-v2',
                      ]
     steps_runs = [3_000, 30_000, 2_020_000, 3_000, 401_000, 41_000]
-    labes = ["Ours", "SMR-SAC", "SMR-RedQ", "SAC", "RedQ", "DroQ"]
+    labes = ["SPEQ (Ours)", "SMR-SAC", "SMR-RedQ", "SAC", "RedQ", "DroQ"]
     steps_runs = dict(zip(eval_runs, steps_runs))
     labels = dict(zip(eval_runs, labes))
 
@@ -134,23 +134,42 @@ for j, env in enumerate(envs):
         plt.fill_between(steps, history_dict[run] - std_dict[run],
                          history_dict[run] + std_dict[run], alpha=0.4)
 
-    # Add plot details
+        # Add plot details
     if env == "Walker2d":
-        plt.xlabel('Log Gradient Steps', fontsize=24)
-    # plt.ylabel('EvalReward')
+        plt.xlabel('Gradient Steps', fontsize=40)
+        # plt.ylabel('EvalReward')
 
     print(last_step)
     plt.axvline(x=last_step, color='black', lw=4)
-    plt.ylabel('EvalReward', fontsize=24)
+    plt.ylabel('EvalReward', fontsize=30)
     plt.xscale('log')
+    plt.xlim(100000,600_000_000 )
     # plt.xlim(0,last_step)
     # plt.title(env)
     # plt.legend(loc='upper left')
     # plt.grid(True)
-    plt.xticks(fontsize=24)
-    plt.yticks(fontsize=24)
-    plt.grid(True, which="both", ls="-")
+    plt.xticks(fontsize=30)
+    plt.yticks(fontsize=30)
+    # plt.grid(True, which="both", ls="-")
     import matplotlib as mpl
+    plt.grid(True)
+
+
+    def format_ticks(value, tick_number):
+        if value == 0:
+            return ''  # Skip 0
+        return f'{int(value / 1000)}k'
+
+
+    import matplotlib.ticker as mticker
+
+    # Get the current axes and apply the formatter to the x-axis
+    plt.gca().yaxis.set_major_formatter(mticker.FuncFormatter(format_ticks))
+
+    # Set automatic ticks only at multiples of 1000
+    plt.gca().yaxis.set_major_locator(mticker.MultipleLocator(1000))
+
+    plt.ylim(bottom=0)
 
     mpl.rcParams['axes.linewidth'] = 2
     plt.tight_layout()

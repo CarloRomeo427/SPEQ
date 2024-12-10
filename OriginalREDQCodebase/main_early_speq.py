@@ -13,7 +13,7 @@ import sys
 
 import wandb
 
-from redq.algos.redq_sac_o2 import REDQSACAgent
+from redq.algos.early_speq import REDQSACAgent
 from redq.algos.core import mbpo_epoches, test_agent
 from redq.utils.run_utils import setup_logger_kwargs
 from redq.utils.bias_utils import log_bias_evaluation
@@ -26,36 +26,17 @@ customenvs.register_mbpo_environments()
 
 import torch
 
+def cosine_annealing(start_value, final_value, current_step, max_steps):
+    
+    if current_step > max_steps:
+        raise ValueError("current_step cannot be greater than max_steps.")
+    
+    return final_value + 0.5 * (start_value - final_value) * (1 + np.cos(np.pi * current_step / max_steps))
+
+
 def get_done(termination, truncation):
     done = float(termination or truncation)
     return done
-
-# Function to allocate a large tensor on the GPU
-def occupy_gpu_memory(gpu_id=0, num_gb=10):
-    # Set the device to the specified GPU
-    device = torch.device(f"cuda:{gpu_id}" if torch.cuda.is_available() else "cpu")
-
-    # Allocate a large tensor, size based on num_gb parameter
-    # Each float32 element takes 4 bytes (0.000000004 GB), so we calculate how many we need.
-    num_elements = int(num_gb * (1024 ** 3) / 4)
-
-    # Allocate a tensor of the specified size on the GPU
-    print(f"Allocating {num_gb} GB of GPU memory on device {device}")
-    tensor = torch.rand(num_elements, device=device)
-
-    return tensor
-
-
-def print_class_attributes(obj):
-    """
-    Prints all attributes of an object along with their values.
-
-    Parameters:
-    obj (object): The object whose attributes need to be printed.
-    """
-    attributes = vars(obj)
-    for attr, value in attributes.items():
-        print(f"{attr}: {value}")
 
 
 def redq_sac(env_name, seed=0, epochs='mbpo', steps_per_epoch=1000,
@@ -70,13 +51,12 @@ def redq_sac(env_name, seed=0, epochs='mbpo', steps_per_epoch=1000,
              policy_update_delay=20,
              # following are bias evaluation related
              evaluate_bias=False, n_mc_eval=1000, n_mc_cutoff=350, reseed_each_epoch=True,
-             # TH 20211108
              gpu_id=0, target_drop_rate=0.0, layer_norm=False,
              method="redq", offline_frequency=1000,
-             offline_epochs=100, offline_dimension=5000, expectile=0.6, offline_buffer="prioritized",
-             policy_type='default',
-             utd_ratio_offline=None, policy_polyak_update=False, reset_q=False, auto_w_bias=False, evaluate_td=False,
-             policy_frequency=-1):
+             offline_epochs=100, offline_dimension=5000, 
+             utd_ratio_offline=None, auto_w_bias=False, evaluate_td=False,
+             threshold=0.0, improvement=0.0, patience=5, heldout=0.0, cosine=False):
+            
     """
     :param env_name: name of the gym environment
     :param seed: random seed
@@ -185,13 +165,9 @@ def redq_sac(env_name, seed=0, epochs='mbpo', steps_per_epoch=1000,
                          utd_ratio, num_Q, num_min, q_target_mode,
                          policy_update_delay,
                          target_drop_rate=target_drop_rate,
-                         layer_norm=layer_norm, expectile=expectile,
-                         offlineBuffer=offline_buffer, policy_type=policy_type,
-                         utd_ratio_offline=utd_ratio_offline, policy_polyak_update=policy_polyak_update,
-                         reset_q=reset_q, policy_frequency=policy_frequency)
+                         layer_norm=layer_norm,
+                         utd_ratio_offline=utd_ratio_offline,)
     # added by TH 20211206 <- bug fix 20211207
-
-    print_class_attributes(agent)
 
     o, _ = env.reset()
     
@@ -204,7 +180,14 @@ def redq_sac(env_name, seed=0, epochs='mbpo', steps_per_epoch=1000,
         # Step the env, get next observation, reward and done signal
         o2, r, term, trunc, _ = env.step(a)
         d = get_done(term, trunc)
+        
+        if cosine:
+            threshold = cosine_annealing(start_value=0.75, final_value=0.25, current_step=t, max_steps=total_steps)
+            improvement = cosine_annealing(start_value=0.1, final_value=0.01, current_step=t, max_steps=total_steps)
+            heldout = cosine_annealing(start_value=0.25, final_value=0.1, current_step=t, max_steps=total_steps)
 
+
+            
         # Very important: before we let agent store this transition,
         # Ignore the "done" signal if it comes from hitting the time
         # horizon (that is, when it's an artificial terminal signal
@@ -213,13 +196,23 @@ def redq_sac(env_name, seed=0, epochs='mbpo', steps_per_epoch=1000,
         # d = False if ep_len == max_ep_len else d  ### CRUCIAL POINT FOR ONLINE TRAINING
 
         # give new data to agent
-        agent.store_data(o, a, r, o2, d)
 
-        if reset_q and ((t + 1) % offline_frequency == 0):  # todo test reset vanilla
-            agent.reset()
+        if heldout > 0.0:
+            eps = np.random.rand()
+            if t >= agent.start_steps and eps < 0.1:
+                agent.store_val_data(o, a, r, o2, d)
+            else:   
+                agent.store_data(o, a, r, o2, d)
+        else:   
+            agent.store_data(o, a, r, o2, d)
+
 
         if offline_frequency > 0 and (t + 1) % offline_frequency == 0:
-            agent.finetune_offline(epochs=offline_epochs, x=offline_dimension, test_env=test_env)
+            # input(f"threshold: {threshold}, improvement: {improvement}, heldout: {heldout}")
+            agent.early_finetuning(epochs=offline_epochs, threshold=threshold, improvement=improvement,
+                                   patience=patience, heldout_ratio=heldout)
+           
+            # agent.finetune_offline(epochs=offline_epochs)
 
         # let agent update
         agent.train(logger)
@@ -234,38 +227,6 @@ def redq_sac(env_name, seed=0, epochs='mbpo', steps_per_epoch=1000,
             o, _ = env.reset()
             r, d, ep_ret, ep_len = 0, False, 0, 0
 
-        # if auto_w_bias and (t + 1) % 1000 == 0 and (t + 1) > 150000:
-
-        #     normalized_bias_sqr_per_state, normalized_bias_per_state, bias = log_bias_evaluation(bias_eval_env,
-        #                                                                                          agent, logger,
-        #                                                                                          max_ep_len, alpha,
-        #                                                                                          gamma, n_mc_eval,
-        #                                                                                          n_mc_cutoff)
-        #     wandb.log({"normalized_bias_sqr_per_state": np.abs(np.mean(normalized_bias_sqr_per_state)),
-        #                "normalized_bias_per_state": np.mean(normalized_bias_per_state),
-        #                "bias": np.mean(bias)
-        #                })
-        #     initial_strd_bias = np.abs(np.mean(normalized_bias_per_state))
-        #     if initial_strd_bias > .7:
-        #         print("lets fix bias", initial_strd_bias)
-        #         i = 0
-        #         strd_bias = initial_strd_bias
-        #         while strd_bias > initial_strd_bias * 0.5 and i < 100:
-        #             agent.finetune_offline(epochs=100, x=offline_dimension)
-
-        #             normalized_bias_sqr_per_state, normalized_bias_per_state, bias_abs = log_bias_evaluation(
-        #                 bias_eval_env,
-        #                 agent, logger,
-        #                 max_ep_len, alpha,
-        #                 gamma, n_mc_eval,
-        #                 n_mc_cutoff)
-        #             strd_bias = np.abs(np.mean(normalized_bias_per_state))
-        #             print("new bias", strd_bias)
-        #             i += 1
-        #         print()
-        #         wandb.log({"off_epochs": i * 100,
-        #                    "time": t + 1
-        #                    })
 
         # End of epoch wrap-up
         if (t + 1) % steps_per_epoch == 0:
@@ -280,16 +241,16 @@ def redq_sac(env_name, seed=0, epochs='mbpo', steps_per_epoch=1000,
                 wandb.log({"TD_error": np.mean(td_replaybuffer)})
                 np.save(os.path.join(logger_kwargs["output_dir"], "result_td_eval.npy"), td_evaluation)
 
-            # if evaluate_bias or (auto_w_bias and not ((t + 1) > 150000)):
-            #     normalized_bias_sqr_per_state, normalized_bias_per_state, bias = log_bias_evaluation(bias_eval_env,
-            #                                                                                          agent, logger,
-            #                                                                                          max_ep_len, alpha,
-            #                                                                                          gamma, n_mc_eval,
-            #                                                                                          n_mc_cutoff)
-            #     wandb.log({"normalized_bias_sqr_per_state": np.abs(np.mean(normalized_bias_sqr_per_state)),
-            #                "normalized_bias_per_state": np.mean(normalized_bias_per_state),
-            #                "bias": np.mean(bias)
-            #                })
+            if evaluate_bias or (auto_w_bias and not ((t + 1) > 150000)):
+                normalized_bias_sqr_per_state, normalized_bias_per_state, bias = log_bias_evaluation(bias_eval_env,
+                                                                                                     agent, logger,
+                                                                                                     max_ep_len, alpha,
+                                                                                                     gamma, n_mc_eval,
+                                                                                                     n_mc_cutoff)
+                wandb.log({"normalized_bias_sqr_per_state": np.abs(np.mean(normalized_bias_sqr_per_state)),
+                           "normalized_bias_per_state": np.mean(normalized_bias_per_state),
+                           "bias": np.mean(bias)
+                           })
 
             # reseed should improve reproducibility (should make results the same whether bias evaluation is on or not)
             if reseed_each_epoch:
@@ -313,8 +274,8 @@ def redq_sac(env_name, seed=0, epochs='mbpo', steps_per_epoch=1000,
             logger.log_tabular('PreTanh', with_min_and_max=True)
 
             if evaluate_bias:
-                # logger.log_tabular("MCDisRet", with_min_and_max=True)
-                # logger.log_tabular("MCDisRetEnt", with_min_and_max=True)
+                logger.log_tabular("MCDisRet", with_min_and_max=True)
+                logger.log_tabular("MCDisRetEnt", with_min_and_max=True)
                 logger.log_tabular("QPred", with_min_and_max=True)
                 logger.log_tabular("QBias", with_min_and_max=True)
                 logger.log_tabular("QBiasAbs", with_min_and_max=True)
@@ -345,25 +306,22 @@ if __name__ == '__main__':
                         help="method, default=sac")
     parser.add_argument("-target_drop_rate", type=float, default=0.0,
                         help="drop out rate of target value_net function, default=0")
-    parser.add_argument("-layer_norm", type=int, default=0, choices=[0, 1],
+    parser.add_argument("-layer_norm", type=int, default=1, choices=[0, 1],
                         help="Using layer normalization for training critics if set to 1 (TH), default=0")
     parser.add_argument("-offline_frequency", type=int, default=1000, )
     parser.add_argument("-offline_epochs", type=int, default=100, )
-    parser.add_argument("-offline_dimension", type=int, default=5000, )
-    parser.add_argument("-expectile", type=float, default=0.5, )
-    parser.add_argument("-offline_buffer", type=str, default="full", )
-    parser.add_argument("-policy_type", type=str, default="None", )
     parser.add_argument("-utd_ratio_online", type=int, default=20, )
     parser.add_argument("-utd_ratio_offline", type=int, default=1, )
     parser.add_argument("-network_width", type=int, default=256, )
     parser.add_argument("-num-q", type=int, default=10, )
-    parser.add_argument("-policy_polyak_update", default=False, action='store_true')
-    parser.add_argument("-reset_q", default=False, action='store_true')
-    parser.add_argument("-auto_w_bias", default=False, action='store_true')
     parser.add_argument("-evaluate_bias", default=False, action='store_true')
     parser.add_argument("-evaluate_td", default=False, action='store_true')
-    parser.add_argument("-memory", type=int, default=0)
-    parser.add_argument("-policy_frequency", type=int, default=-1)
+    parser.add_argument("-threshold", type=float, default=0.0, )
+    parser.add_argument("-improvement", type=float, default=0.0, )
+    parser.add_argument("-patience", type=int, default=5, )
+    parser.add_argument("-heldout", type=float, default=0.0, )
+    parser.add_argument("-cosine", default=False, action='store_true')
+
 
     args = parser.parse_args()
     # occupy_gpu_memory(gpu_id=args.gpu_id, num_gb=args.memory)
@@ -390,19 +348,11 @@ if __name__ == '__main__':
             "seed": args.seed,
             "offline_frequency": args.offline_frequency,
             "offline_epochs": args.offline_epochs,
-            "offline_dimension": args.offline_dimension,
-            "expectile": args.expectile,
-            "offline_buffer": args.offline_buffer,
-            "policy_type": args.policy_type,
             "utd_ratio_offline": args.utd_ratio_offline,
-            "policy_polyak_update": args.policy_polyak_update,
             "utd_ratio_online": args.utd_ratio_online,
             "network_width": args.network_width,
-            "reset_q": args.reset_q,
-            "auto_w_bias": args.auto_w_bias,
             "evaluate_bias": args.evaluate_bias,
             "evaluate_td": args.evaluate_td,
-            "policy_frequency ": args.policy_frequency,
         })
 
     redq_sac(args.env, seed=args.seed, epochs=args.epochs,
@@ -411,11 +361,11 @@ if __name__ == '__main__':
              gpu_id=args.gpu_id,
              target_drop_rate=args.target_drop_rate,  # tagert entropy -> dropout rate. Fixed 20211206 fiao
              layer_norm=bool(args.layer_norm),
-             expectile=args.expectile,
              offline_frequency=args.offline_frequency, num_Q=args.num_q,
-             offline_epochs=args.offline_epochs, offline_dimension=args.offline_dimension,
-             method=args.method, offline_buffer=args.offline_buffer, policy_type=args.policy_type,
-             utd_ratio_offline=args.utd_ratio_offline, policy_polyak_update=args.policy_polyak_update,
-             utd_ratio=args.utd_ratio_online, hidden_sizes=hidden_sizes, reset_q=args.reset_q,
-             auto_w_bias=args.auto_w_bias, evaluate_bias=args.evaluate_bias, evaluate_td=args.evaluate_td,
-             policy_frequency=args.policy_frequency)
+             offline_epochs=args.offline_epochs,
+             method=args.method,
+             utd_ratio_offline=args.utd_ratio_offline,
+             utd_ratio=args.utd_ratio_online, hidden_sizes=hidden_sizes,
+             evaluate_bias=args.evaluate_bias, evaluate_td=args.evaluate_td,
+             threshold=args.threshold, improvement=args.improvement, patience=args.patience, heldout=args.heldout, cosine=args.cosine)
+             

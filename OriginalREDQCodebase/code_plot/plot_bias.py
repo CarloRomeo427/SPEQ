@@ -11,7 +11,7 @@ api = wandb.Api()
 # Project is specified by <entity/project-name>
 runs = api.runs("girolamomacaluso/lomo")
 envs = ["Humanoid", "Ant", "Hopper", "Walker2d", ]
-durations = [300, 300, 300, 300, 300]  # ,
+durations = [300, 300, 300, 300, 300]
 maxy = [0.75, 5, 1.5, 1.3]
 miny = [-0.4, -0.8, -0.3, -0.3]
 save_dir = "/home/ganjiro/PycharmProjects/dropRL/DropQ/OriginalREDQCodebase/plots"
@@ -39,10 +39,10 @@ for j, env in enumerate(envs):
         eval_runs = [f'10K_75K_bias_dropQ_300_{env}-v2', f'SMC_sac_bias_{env}-v2', f'SMC_redq_bias_{env}-v2',
                      f'sac_1_vanilla_bias_{env}-v2',
                      f'vanilla_redQ_bias_{env}-v2',
-                     f'vanilla_dropQ_bias_300{env}-v2',
+                     f'vanilla_dropQ_bias_300_{env}-v2',
                      # f'utd_9_dropQ_{env}-v2',
                      ]
-    labes = ["Ours", "SMR-SAC", "SMR-RedQ", "SAC", "RedQ", "DroQ", "DroQ UTD 9"]
+    labes = ["SPEQ (Ours)", "SMR-SAC", "SMR-RedQ", "SAC", "RedQ", "DroQ", "DroQ UTD 9"]
 
     lables = dict(zip(eval_runs, labes))
     history_dict = dict(zip(eval_runs, [[] for _ in eval_runs]))
@@ -106,13 +106,14 @@ for j, env in enumerate(envs):
                          history_dict[run] + std_dict[run], alpha=0.4)
     from matplotlib import rcParams
 
+    plt.ylim(miny[j], maxy[j])
     rcParams.update({'figure.autolayout': True})
 
     # Add plot details
     if env == "Walker2d":
-        plt.xlabel('Environment Steps', fontsize=24)
+        plt.xlabel('Environment Steps', fontsize=40)
 
-    plt.ylabel('Bias', fontsize=24)
+    plt.ylabel('Bias', fontsize=30)
 
     # plt.title(env, rotation='vertical', x=-0.16, y=0.3, fontsize=24, weight='bold')
 
@@ -126,9 +127,20 @@ for j, env in enumerate(envs):
 
     mpl.rcParams['axes.linewidth'] = 2
 
-    plt.xticks(ticks=np.array([0, 50000, 150_000, 250_000]), fontsize=24)
-    plt.yticks(fontsize=24)
-    plt.ylim(miny[j], maxy[j])
+    plt.xticks(ticks=np.array([0, 50000, 150_000, 250_000]), fontsize=30)
+    plt.yticks(fontsize=30)
+
+
+    def format_ticks(value, tick_number):
+        if value == 0:
+            return ''  # Skip 0
+        return f'{int(value / 1000)}k'
+
+
+    import matplotlib.ticker as mticker
+
+    # Get the current axes and apply the formatter to the x-axis
+    plt.gca().yaxis.set_major_formatter(mticker.FuncFormatter(format_ticks))
 
     plt.grid(True)
     from matplotlib.ticker import StrMethodFormatter

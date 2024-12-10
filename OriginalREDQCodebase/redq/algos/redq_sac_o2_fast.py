@@ -294,58 +294,11 @@ class REDQSACAgent(object):
         #                                     action_limit=self.act_limit).to(self.device)
         # self.policy_optimizer = optim.Adam(self.policy_net.parameters(), lr=self.lr)
 
-
-    def evaluate_validation_loss(self, batch_size=256):
-        """
-        Evaluate Q-loss on the entire validation replay buffer by iterating over it in batches.
-        Returns the average Q-loss across all validation data.
-        """
-        val_data = self.replay_buffer.sample_all()
-        obs_full = val_data['obs1']
-        obs_next_full = val_data['obs2']
-        acts_full = val_data['acts']
-        rews_full = val_data['rews']
-        done_full = val_data['done']
-
-        num_samples = len(obs_full)
-        if num_samples == 0:
-            return 0.0  # No validation data available
-
-        num_batches = (num_samples + batch_size - 1) // batch_size
-        total_loss = 0.0
-
-        for i in range(num_batches):
-            start_idx = i * batch_size
-            end_idx = min((i + 1) * batch_size, num_samples)
-
-            obs_tensor = torch.Tensor(obs_full[start_idx:end_idx]).to(self.device)
-            obs_next_tensor = torch.Tensor(obs_next_full[start_idx:end_idx]).to(self.device)
-            acts_tensor = torch.Tensor(acts_full[start_idx:end_idx]).to(self.device)
-            rews_tensor = torch.Tensor(rews_full[start_idx:end_idx]).unsqueeze(1).to(self.device)
-            done_tensor = torch.Tensor(done_full[start_idx:end_idx]).unsqueeze(1).to(self.device)
-
-            # Compute Q-loss for this batch
-            with torch.no_grad():
-                y_q, _ = self.get_redq_q_target_no_grad(obs_next_tensor, rews_tensor, done_tensor)
-                q_prediction_list = [
-                    q_net(torch.cat([obs_tensor, acts_tensor], 1)) for q_net in self.q_net_list
-                ]
-                q_prediction_cat = torch.cat(q_prediction_list, dim=1)
-                y_q = y_q.expand((-1, self.num_Q)) if y_q.shape[1] == 1 else y_q
-
-                # MSE loss for validation data
-                q_loss_all = self.mse_criterion(q_prediction_cat, y_q) * self.num_Q
-                total_loss += q_loss_all.item()
-
-        average_loss = total_loss / num_batches
-        return average_loss
-
     def finetune_offline(self, epochs, x, test_env=None):
         """ Finetune the model on the top x% of the data """
 
         num_update = 0 if self.__get_current_num_data() <= self.delay_update_steps else self.utd_ratio_offline
-        initial_loss = self.evaluate_validation_loss()
-        wandb.log({"ValLoss": initial_loss})
+
         # if self.reset_q:
         #     self.reset()
 
@@ -360,10 +313,22 @@ class REDQSACAgent(object):
             for key in filtered_batches:
                 filtered_batches[key] = np.array(filtered_batches[key])
 
+        def slice(d, batch_size, i):
+            batch = {}
+
+            for k, v in d.items():
+                batch[k] = v[i * batch_size:(i + 1) * batch_size]
+            return batch
+
         for e in range(epochs):
-            if e % 1000 == 0:
-                val_loss = self.evaluate_validation_loss()
-                wandb.log({"ValLoss": val_loss})
+            if (e + 1) % 5000 == 0:
+                obs_tensor_full, obs_next_tensor_full, acts_tensor_full, rews_tensor_full, done_tensor_full = self.sample_data(
+                    self.batch_size * 5000)
+
+                data = {'obs': obs_tensor_full, 'next': obs_next_tensor_full, 'act': acts_tensor_full,
+                        'rew': rews_tensor_full,
+                        'done': done_tensor_full}
+
             if test_env and (e + 1) % 5000 == 0:
                 test_rw = test_agent(self, test_env, 1000, None)  # add logging here
                 wandb.log({"EvalReward": np.mean(test_rw)})
@@ -371,26 +336,12 @@ class REDQSACAgent(object):
                 if self.policy_polyak_update:
                     self.target_policy_net = copy.deepcopy(self.policy_net)
 
-                if self.offlineBuffer == "prioritized" or self.offlineBuffer == "random":
-                    idx_batch = np.random.choice(len(filtered_batches), self.batch_size)
-                    obs = filtered_batches['obs1'][idx_batch]
-                    obs_next = filtered_batches['obs2'][idx_batch]
-                    acts = filtered_batches['acts'][idx_batch]
-                    rews = filtered_batches['rews'][idx_batch]
-                    done = filtered_batches['done'][idx_batch]
-
-                    obs_tensor = Tensor(obs).to(self.device)
-                    obs_next_tensor = Tensor(obs_next).to(self.device)
-                    acts_tensor = Tensor(acts).to(self.device)
-                    rews_tensor = Tensor(rews).unsqueeze(1).to(self.device)
-                    done_tensor = Tensor(done).unsqueeze(1).to(self.device)
-
-                elif self.offlineBuffer == "full":
-                    obs_tensor, obs_next_tensor, acts_tensor, rews_tensor, done_tensor = self.sample_data(
-                        self.batch_size)
-                else:
-                    raise NotImplementedError
-                
+                batch = slice(data, self.batch_size, e)
+                obs_tensor = batch['obs']
+                obs_next_tensor = batch['next']
+                acts_tensor = batch['act']
+                rews_tensor = batch['rew']
+                done_tensor = batch['done']
 
                 """Q loss"""
                 if self.policy_type != 'only':

@@ -15,7 +15,7 @@ durations = [300, 300, 300, 300, 300, ]
 maxy = 5
 miny = -0.5
 save_dir = "/home/ganjiro/PycharmProjects/dropRL/DropQ/OriginalREDQCodebase/plots"
-exp_name = "ablation_bias"
+exp_name = "utd_all"
 
 
 def exponential_moving_average(data, alpha=0.2):
@@ -50,7 +50,8 @@ std_dict = dict(zip(eval_runs, [[] for _ in eval_runs]))
 # Iterate through runs and extract relevant data
 for run in runs: #and "Ant"  in run.name \
     if run.state == "finished" \
-            and "Ant" in run.name \
+            and "HalfCheetah" not in run.name \
+            and "Hopper" not in run.name \
             and ("10K_75K_bias_dropQ_Hopper-v2" not in run.name) \
             and ("utd_9_dropQ_Hopper-v2" not in run.name) \
             and ("vanilla_dropQ_bias_Hopper-v2" not in run.name) \
@@ -58,7 +59,7 @@ for run in runs: #and "Ant"  in run.name \
         print(run.name)
         # Extract historical data with steps and EvalReward
         try:
-            rewards = run.history(keys=["normalized_bias_per_state"]).to_numpy()[:, 1]
+            rewards = run.history(keys=["EvalReward"]).to_numpy()[:, 1]
             run_corr = next((substring for substring in eval_runs if substring in run.name), None)
             history_dict[run_corr].append(rewards)
 
@@ -119,15 +120,14 @@ for run in eval_runs:
 
 # Add plot details
 
-# leg = plt.legend(loc='upper right', fontsize=30)
+leg = plt.legend(loc='upper left', fontsize=30)
 
 # change the line width for the legend
-# for line in leg.get_lines():
-#     line.set_linewidth(8.0)
+for line in leg.get_lines():
+    line.set_linewidth(8.0)
 
 plt.xlabel('Gradient Steps', fontsize=30)
-
-plt.ylabel('Bias', fontsize=30)
+plt.ylabel('Eval Reward', fontsize=30)
 # plt.xscale('log')
 # plt.xlim(0, last_step)
 # plt.title(env)
@@ -138,8 +138,18 @@ plt.yticks(fontsize=30)
 plt.grid(True, which="both", ls="-")
 import matplotlib as mpl
 
-plt.ylim(miny, maxy)
+
+def format_ticks(value, tick_number):
+    if value == 0:
+        return ''  # Skip 0
+    return f'{int(value / 1000)}k'
+
+
+import matplotlib.ticker as mticker
+
+plt.gca().yaxis.set_major_formatter(mticker.FuncFormatter(format_ticks))
 plt.xlim(0, 295_000)
+
 mpl.rcParams['axes.linewidth'] = 3
 plt.tight_layout()
 plt.savefig(os.path.join(save_dir, f'{exp_name}.pdf'), bbox_inches='tight', )

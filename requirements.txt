@@ -3,4 +3,3 @@ torch
 gym
 tensorboard
 git+https://github.com/ku2482/rltorch
-joblib

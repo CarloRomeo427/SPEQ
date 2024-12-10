@@ -31,7 +31,7 @@ for j, env in enumerate(envs):
 
 
                  ]
-    labes = ["Ours", "Only Policy", "Policy and Q-Function",]  # "RedQ UTD 20", "RedQ UTD 9",             "RedQ UTD 3", "RedQ UTD 2"
+    labes = ["SPEQ (Ours)", "Only Policy", "Policy and Q-Function",]  # "RedQ UTD 20", "RedQ UTD 9",             "RedQ UTD 3", "RedQ UTD 2"
 
     lables = dict(zip(eval_runs, labes))
     history_dict = dict(zip(eval_runs, [[] for _ in eval_runs]))
@@ -99,22 +99,31 @@ for j, env in enumerate(envs):
 
     # Add plot details
     # if env == "Walker2d":
-    plt.xlabel('Environment Steps', fontsize=24)
+    plt.xlabel('Environment Steps', fontsize=30)
 
-    plt.ylabel('EvalReward', fontsize=24)
-
+    plt.ylabel('EvalReward', fontsize=30)
+    # plt.title("Humanoid", fontsize=26)
     # plt.title(, rotation='vertical', x=-0.16, y=0.4, fontsize=22, weight='bold')
 
     # if env == "Ant":
-    leg = plt.legend(loc='upper left', fontsize=24)
+    leg = plt.legend(loc='upper left', fontsize=30)
     # change the line width for the legend
     for line in leg.get_lines():
         line.set_linewidth(6.0)
     import matplotlib as mpl
+    def format_ticks(value, tick_number):
+        if value == 0:
+            return ''  # Skip 0
+        return f'{int(value / 1000)}k'
 
+
+    import matplotlib.ticker as mticker
+
+    plt.gca().yaxis.set_major_formatter(mticker.FuncFormatter(format_ticks))
     mpl.rcParams['axes.linewidth'] = 2
-    plt.xticks(ticks=np.array([0, 50000, 150_000, 250_000]), fontsize=24)
-    plt.yticks(fontsize=20)
+    plt.xticks(ticks=np.array([0, 50000, 150_000, 250_000]), fontsize=30)
+    plt.yticks(fontsize=30)
     plt.grid(True)
+    plt.xlim(0, 295_000)
     # plt.tight_layout()
     plt.savefig(os.path.join(save_dir, f'{exp_name}_{env}.pdf'), bbox_inches='tight')
