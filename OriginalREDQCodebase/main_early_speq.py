@@ -55,7 +55,8 @@ def redq_sac(env_name, seed=0, epochs='mbpo', steps_per_epoch=1000,
              method="redq", offline_frequency=1000,
              offline_epochs=100, offline_dimension=5000, 
              utd_ratio_offline=None, auto_w_bias=False, evaluate_td=False,
-             threshold=0.0, improvement=0.0, patience=5, heldout=0.0, cosine=False):
+             threshold=0.0, improvement=0.0, patience=5, heldout=0.0, cosine=False,
+             start_thresh=0.0, start_impr=0.0, start_held=0.0, end_thresh=0.0, end_impr=0.0, end_held=0.0):
             
     """
     :param env_name: name of the gym environment
@@ -182,9 +183,9 @@ def redq_sac(env_name, seed=0, epochs='mbpo', steps_per_epoch=1000,
         d = get_done(term, trunc)
         
         if cosine:
-            threshold = cosine_annealing(start_value=0.75, final_value=0.25, current_step=t, max_steps=total_steps)
-            improvement = cosine_annealing(start_value=0.1, final_value=0.01, current_step=t, max_steps=total_steps)
-            heldout = cosine_annealing(start_value=0.25, final_value=0.1, current_step=t, max_steps=total_steps)
+            threshold = cosine_annealing(start_value=start_thresh, final_value=end_thresh, current_step=t, max_steps=total_steps)
+            improvement = cosine_annealing(start_value=start_impr, final_value=end_impr, current_step=t, max_steps=total_steps)
+            heldout = cosine_annealing(start_value=start_held, final_value=end_held, current_step=t, max_steps=total_steps)
 
 
             
@@ -318,9 +319,15 @@ if __name__ == '__main__':
     parser.add_argument("-evaluate_td", default=False, action='store_true')
     parser.add_argument("-threshold", type=float, default=0.0, )
     parser.add_argument("-improvement", type=float, default=0.0, )
-    parser.add_argument("-patience", type=int, default=5, )
     parser.add_argument("-heldout", type=float, default=0.0, )
+    parser.add_argument("-patience", type=int, default=5, )
     parser.add_argument("-cosine", default=False, action='store_true')
+    parser.add_argument("-start_thresh", type=float, default=0.0, )
+    parser.add_argument("-start_impr", type=float, default=0.0, )
+    parser.add_argument("-start_held", type=float, default=0.0, )
+    parser.add_argument("-end_thresh", type=float, default=0.0, )
+    parser.add_argument("-end_impr", type=float, default=0.0, )
+    parser.add_argument("-end_held", type=float, default=0.0, )
 
 
     args = parser.parse_args()
@@ -367,5 +374,7 @@ if __name__ == '__main__':
              utd_ratio_offline=args.utd_ratio_offline,
              utd_ratio=args.utd_ratio_online, hidden_sizes=hidden_sizes,
              evaluate_bias=args.evaluate_bias, evaluate_td=args.evaluate_td,
-             threshold=args.threshold, improvement=args.improvement, patience=args.patience, heldout=args.heldout, cosine=args.cosine)
+             threshold=args.threshold, improvement=args.improvement, patience=args.patience, heldout=args.heldout, 
+             cosine=args.cosine, start_thresh=args.start_thresh, start_impr=args.start_impr, start_held=args.start_held,
+             end_thresh=args.end_thresh, end_impr=args.end_impr, end_held=args.end_held)
              
