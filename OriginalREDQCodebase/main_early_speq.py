@@ -171,6 +171,8 @@ def redq_sac(env_name, seed=0, epochs='mbpo', steps_per_epoch=1000,
     # added by TH 20211206 <- bug fix 20211207
 
     o, _ = env.reset()
+    while o is None or len(o) == 0:
+        o, _ = env.reset()
     
     r, d, ep_ret, ep_len = 0, False, 0, 0
     if evaluate_td: td_evaluation = np.zeros([296, 310_000])
@@ -200,7 +202,7 @@ def redq_sac(env_name, seed=0, epochs='mbpo', steps_per_epoch=1000,
 
         if heldout > 0.0:
             eps = np.random.rand()
-            if t >= agent.start_steps and eps < 0.1:
+            if t >= agent.start_steps and eps < heldout:
                 agent.store_val_data(o, a, r, o2, d)
             else:   
                 agent.store_data(o, a, r, o2, d)
@@ -209,9 +211,29 @@ def redq_sac(env_name, seed=0, epochs='mbpo', steps_per_epoch=1000,
 
 
         if offline_frequency > 0 and (t + 1) % offline_frequency == 0:
-            # input(f"threshold: {threshold}, improvement: {improvement}, heldout: {heldout}")
-            agent.early_finetuning(epochs=offline_epochs, threshold=threshold, improvement=improvement,
-                                   patience=patience, heldout_ratio=heldout)
+
+            if args.early_with_bias:
+                # input(f"threshold: {threshold}, improvement: {improvement}, heldout: {heldout}")
+                
+                normalized_bias_sqr_per_state, normalized_bias_per_state, bias, obs_tensor, act_tensor, mc_vals = log_bias_evaluation(bias_eval_env,
+                                                                                                        agent, logger,
+                                                                                                        max_ep_len, alpha,
+                                                                                                        gamma, n_mc_eval,
+                                                                                                        n_mc_cutoff)
+                wandb.log({"normalized_bias_sqr_per_state": np.abs(np.mean(normalized_bias_sqr_per_state)),
+                            "normalized_bias_per_state": np.mean(normalized_bias_per_state),
+                            "bias": np.mean(bias)
+                            })
+                
+                agent.early_finetuning_with_bias(epochs=offline_epochs, patience=patience, 
+                                                init_bias=np.mean(bias),
+                                                bias_state=obs_tensor, bias_action=act_tensor, 
+                                                mc_values=mc_vals)
+
+                
+            else:
+                agent.early_finetuning(epochs=offline_epochs, threshold=threshold, improvement=improvement,
+                                   patience=patience, heldout_ratio=heldout, bias_state=obs_tensor, bias_action=act_tensor)
            
             # agent.finetune_offline(epochs=offline_epochs)
 
@@ -226,6 +248,8 @@ def redq_sac(env_name, seed=0, epochs='mbpo', steps_per_epoch=1000,
             logger.store(EpRet=ep_ret, EpLen=ep_len)
             # reset environment
             o, _ = env.reset()
+            while o is None or len(o) == 0:
+                o, _ = env.reset()
             r, d, ep_ret, ep_len = 0, False, 0, 0
 
 
@@ -242,16 +266,16 @@ def redq_sac(env_name, seed=0, epochs='mbpo', steps_per_epoch=1000,
                 wandb.log({"TD_error": np.mean(td_replaybuffer)})
                 np.save(os.path.join(logger_kwargs["output_dir"], "result_td_eval.npy"), td_evaluation)
 
-            if evaluate_bias or (auto_w_bias and not ((t + 1) > 150000)):
-                normalized_bias_sqr_per_state, normalized_bias_per_state, bias = log_bias_evaluation(bias_eval_env,
-                                                                                                     agent, logger,
-                                                                                                     max_ep_len, alpha,
-                                                                                                     gamma, n_mc_eval,
-                                                                                                     n_mc_cutoff)
-                wandb.log({"normalized_bias_sqr_per_state": np.abs(np.mean(normalized_bias_sqr_per_state)),
-                           "normalized_bias_per_state": np.mean(normalized_bias_per_state),
-                           "bias": np.mean(bias)
-                           })
+            # if evaluate_bias or (auto_w_bias and not ((t + 1) > 150000)):
+            #     normalized_bias_sqr_per_state, normalized_bias_per_state, bias = log_bias_evaluation(bias_eval_env,
+            #                                                                                          agent, logger,
+            #                                                                                          max_ep_len, alpha,
+            #                                                                                          gamma, n_mc_eval,
+            #                                                                                          n_mc_cutoff)
+            #     wandb.log({"normalized_bias_sqr_per_state": np.abs(np.mean(normalized_bias_sqr_per_state)),
+            #                "normalized_bias_per_state": np.mean(normalized_bias_per_state),
+            #                "bias": np.mean(bias)
+            #                })
 
             # reseed should improve reproducibility (should make results the same whether bias evaluation is on or not)
             if reseed_each_epoch:
@@ -322,6 +346,7 @@ if __name__ == '__main__':
     parser.add_argument("-heldout", type=float, default=0.0, )
     parser.add_argument("-patience", type=int, default=5, )
     parser.add_argument("-cosine", default=False, action='store_true')
+    parser.add_argument("-early_with_bias", default=False, action='store_true')
     parser.add_argument("-start_thresh", type=float, default=0.0, )
     parser.add_argument("-start_impr", type=float, default=0.0, )
     parser.add_argument("-start_held", type=float, default=0.0, )
@@ -377,4 +402,4 @@ if __name__ == '__main__':
              threshold=args.threshold, improvement=args.improvement, patience=args.patience, heldout=args.heldout, 
              cosine=args.cosine, start_thresh=args.start_thresh, start_impr=args.start_impr, start_held=args.start_held,
              end_thresh=args.end_thresh, end_impr=args.end_impr, end_held=args.end_held)
-             
+

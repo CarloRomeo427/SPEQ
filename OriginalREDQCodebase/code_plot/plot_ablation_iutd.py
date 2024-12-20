@@ -4,6 +4,8 @@ import numpy as np
 import pandas as pd
 import wandb
 import matplotlib.pyplot as plt
+import matplotlib
+matplotlib.use('WebAgg')
 
 # Initialize the wandb API
 api = wandb.Api()
@@ -12,7 +14,7 @@ api = wandb.Api()
 runs = api.runs("girolamomacaluso/lomo")
 envs = ["Humanoid", ]
 durations = [300, 300, 300, 300, 300]  # ,
-save_dir = "/home/ganjiro/PycharmProjects/dropRL/DropQ/OriginalREDQCodebase/plots"
+save_dir = "/home/romeo/Projects/SPEQ/OriginalREDQCodebase/plots/"
 exp_name = "alb_utd"
 
 
@@ -121,5 +123,6 @@ for j, env in enumerate(envs):
     plt.xticks(ticks=np.array([0, 50000, 150_000, 250_000]), fontsize=24)
     plt.yticks(fontsize=20)
     plt.grid(True)
+    plt.show()
     # plt.tight_layout()
-    plt.savefig(os.path.join(save_dir, f'{exp_name}_{env}.pdf'), bbox_inches='tight')
+    # plt.savefig(os.path.join(save_dir, f'{exp_name}_{env}.pdf'), bbox_inches='tight')

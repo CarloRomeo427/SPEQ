@@ -109,6 +109,8 @@ class REDQSACAgent(object):
         return action
 
     def get_action_and_logprob_for_bias_evaluation(self, obs):
+        if obs is None or len(obs) == 0:
+            raise ValueError("Observation is empty")
         with torch.no_grad():
             obs_tensor = torch.Tensor(obs).unsqueeze(0).to(self.device)
             action_tensor, _, _, log_prob_a_tilda, _, _, = self.policy_net.forward(obs_tensor, deterministic=False,
@@ -382,7 +384,8 @@ class REDQSACAgent(object):
 
         # Phase 1 tracking
         threshold_reached = False
-        best_val_loss = None  # Will be set once threshold is reached
+        # best_val_loss = None  # Will be set once threshold is reached
+        best_val_loss = initial_val_loss
 
         # Phase 2 tracking (once threshold is reached)
         no_improvement_count = 0
@@ -425,31 +428,113 @@ class REDQSACAgent(object):
                 wandb.log({'ValQloss': current_val_loss})
                 steps_since_last_check = 0
 
-                if not threshold_reached:
-                    # Phase 1: Check if we've reached below lower_bound
-                    if current_val_loss < lower_bound:
-                        # Threshold reached, enter Phase 2
-                        threshold_reached = True
-                        best_val_loss = current_val_loss
-                        no_improvement_count = 0
-                        print(f"Reached lower bound at epoch {e}: current_val_loss {current_val_loss:.4f} < {lower_bound:.4f}")
+                # if not threshold_reached:
+                #     # Phase 1: Check if we've reached below lower_bound
+                #     if current_val_loss < lower_bound:
+                #         # Threshold reached, enter Phase 2
+                #         threshold_reached = True
+                #         best_val_loss = current_val_loss
+                #         no_improvement_count = 0
+                #         print(f"Reached lower bound at epoch {e}: current_val_loss {current_val_loss:.4f} < {lower_bound:.4f}")
+                # else:
+                #     # Phase 2: Check for significant improvements over best_val_loss
+                #     # Must improve by at least 5%
+                #     if current_val_loss < best_val_loss * (1 - improvement):
+                #         # Significant improvement detected
+                #         best_val_loss = current_val_loss
+                #         no_improvement_count = 0
+                #         print(f"Significant improvement at epoch {e}: new best_val_loss {best_val_loss:.4f}")
+                #     else:
+                #         # No significant improvement
+                #         no_improvement_count += 1
+                #         print(f"No significant improvement at epoch {e}: {no_improvement_count}/{patience}")
+
+                #         # If we have gone 'patience' checks with no improvement, stop early
+                #         if no_improvement_count >= patience:
+                #             wandb.log({'OffEpochs': e})
+                #             print(f"Stopping early due to no 5% improvement for {no_improvement_count} checks.")
+                #             return
+
+
+                if current_val_loss < best_val_loss*(1-improvement):
+                    
+                    best_val_loss = current_val_loss
+                    no_improvement_count = 0
+                    print(f"Significant improvement at epoch {e}: new best_val_loss {best_val_loss:.4f}")
                 else:
-                    # Phase 2: Check for significant improvements over best_val_loss
-                    # Must improve by at least 5%
-                    if current_val_loss < best_val_loss * (1 - improvement):
-                        # Significant improvement detected
-                        best_val_loss = current_val_loss
-                        no_improvement_count = 0
-                        print(f"Significant improvement at epoch {e}: new best_val_loss {best_val_loss:.4f}")
-                    else:
-                        # No significant improvement
-                        no_improvement_count += 1
-                        print(f"No significant improvement at epoch {e}: {no_improvement_count}/{patience}")
+                    # No significant improvement
+                    no_improvement_count += 1
+                    print(f"No significant improvement at epoch {e}: {no_improvement_count}/{patience}")
 
-                        # If we have gone 'patience' checks with no improvement, stop early
-                        if no_improvement_count >= patience:
-                            wandb.log({'OffEpochs': e})
-                            print(f"Stopping early due to no 5% improvement for {no_improvement_count} checks.")
-                            return
+                    # If we have gone 'patience' checks with no improvement, stop early
+                    if no_improvement_count >= patience:
+                        wandb.log({'OffEpochs': e})
+                        print(f"Stopping early due to no 5% improvement for {no_improvement_count} checks.")
+                        return
+        wandb.log({'OffEpochs': last_epoch})
 
+
+    def early_finetuning_with_bias(self, epochs, patience=5, check_interval=1000, 
+                                    init_bias=None, bias_state=None, bias_action=None, mc_values=None):
+        best_val = np.mean(init_bias)
+        steps_since_last_check = 0
+        no_improvement_count = 0
+        for e in range(epochs):
+            last_epoch = e
+
+            # Sample a batch from main replay buffer
+            obs_tensor, obs_next_tensor, acts_tensor, rews_tensor, done_tensor = self.sample_data(self.batch_size)
+
+            # Compute Q-loss on this batch with MSE
+            y_q, _ = self.get_redq_q_target_no_grad(obs_next_tensor, rews_tensor, done_tensor)
+            q_prediction_list = [
+                q_net(torch.cat([obs_tensor, acts_tensor], 1))
+                for q_net in self.q_net_list
+            ]
+            q_prediction_cat = torch.cat(q_prediction_list, dim=1)
+            y_q = y_q.expand((-1, self.num_Q)) if y_q.shape[1] == 1 else y_q
+            q_loss_all = self.mse_criterion(q_prediction_cat, y_q) * self.num_Q
+
+            # Update Q-networks
+            for q_i in range(self.num_Q):
+                self.q_optimizer_list[q_i].zero_grad()
+            q_loss_all.backward()
+            for q_i in range(self.num_Q):
+                self.q_optimizer_list[q_i].step()
+
+            # Soft update Q-target networks
+            for q_i in range(self.num_Q):
+                soft_update_model1_with_model2(self.q_target_net_list[q_i], self.q_net_list[q_i], self.polyak)
+
+            steps_since_last_check += 1
+
+            # Check validation loss after a certain interval
+            if steps_since_last_check >= check_interval:
+                with torch.no_grad():
+                    current_qs = self.get_ave_q_prediction_for_bias_evaluation(bias_state, bias_action).cpu().numpy().reshape(-1)
+                current_bias = current_qs - mc_values
+                # print(f"Current bias: {current_bias}")
+                wandb.log({'ValQloss': current_bias})
+                steps_since_last_check = 0
+                current_bias = np.mean(current_bias)
+                goal_bias = best_val * 0.99
+                # print(f"Current bias: {current_bias:.4f}")
+                # print(f"Best bias: {best_val:.4f}")
+                # print(f"Best bias * 0.99: {goal_bias:.4f}")
+                if current_bias < goal_bias:
+                    # print(f"IS current bias < best_val*0.99: {current_bias < goal_bias}")
+                    # input()
+                    best_val = current_bias
+                    no_improvement_count = 0
+                    print(f"Significant improvement at epoch {e}: new best_val_loss {best_val:.4f}")
+                else:
+                    # No significant improvement
+                    no_improvement_count += 1
+                    print(f"No significant improvement at epoch {e}: {no_improvement_count}/{patience}")
+
+                    # If we have gone 'patience' checks with no improvement, stop early
+                    if no_improvement_count >= patience:
+                        # wandb.log({'OffEpochs': e})
+                        print(f"Stopping early due to no 5% improvement for {no_improvement_count} checks.")
+                        break
         wandb.log({'OffEpochs': last_epoch})
