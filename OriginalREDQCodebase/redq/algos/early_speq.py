@@ -258,10 +258,13 @@ class REDQSACAgent(object):
             for q_i in range(self.num_Q):
                 soft_update_model1_with_model2(self.q_target_net_list[q_i], self.q_net_list[q_i], self.polyak)
 
+
+            
+
             if i_update == num_update - 1:
                 logger.store(LossPi=policy_loss.cpu().item(), LossQ1=q_loss_all.cpu().item() / self.num_Q,
                              LossAlpha=alpha_loss.cpu().item(),
-                             Q1Vals=q_prediction.detach().cpu().numpy(),  # NOTE: use parentheses for .numpy()
+                             Q1Vals=q_prediction.detach().cpu().numpy().flatten(),  # NOTE: use parentheses for .numpy()
                              Alpha=self.alpha, LogPi=log_prob_a_tilda.detach().cpu().numpy(),
                              PreTanh=pretanh.abs().detach().cpu().numpy().reshape(-1))
 
@@ -269,7 +272,14 @@ class REDQSACAgent(object):
                            "mean_loss_q": q_loss_all.cpu().item() / self.num_Q})
 
         if num_update == 0:
-            logger.store(LossPi=0, LossQ1=0, LossAlpha=0, Q1Vals=0, Alpha=0, LogPi=0, PreTanh=0)
+            logger.store(LossPi=0, 
+                        LossQ1=0, 
+                        LossAlpha=0, 
+                        Q1Vals=np.array([0.0], dtype=np.float32), 
+                        Alpha=0, 
+                        LogPi=np.array([0.0], dtype=np.float32), 
+                        PreTanh=np.array([0.0], dtype=np.float32))
+            
 
     def finetune_offline(self, epochs, test_env=None):
         num_update = 0 if self.__get_current_num_data() <= self.delay_update_steps else self.utd_ratio_offline

@@ -16,7 +16,7 @@ import wandb
 from redq.algos.early_speq import REDQSACAgent
 from redq.algos.core import mbpo_epoches, test_agent
 from redq.utils.run_utils import setup_logger_kwargs
-from redq.utils.bias_utils import log_bias_evaluation
+from redq.utils.bias_utils_early import log_bias_evaluation
 from redq.utils.logx import EpochLogger
 
 # added by TH 20211206
@@ -215,7 +215,7 @@ def redq_sac(env_name, seed=0, epochs='mbpo', steps_per_epoch=1000,
             if args.early_with_bias:
                 # input(f"threshold: {threshold}, improvement: {improvement}, heldout: {heldout}")
                 
-                normalized_bias_sqr_per_state, normalized_bias_per_state, bias, obs_tensor, act_tensor, mc_vals = log_bias_evaluation(bias_eval_env,
+                normalized_bias_sqr_per_state, normalized_bias_per_state, bias, obs_tensor, act_tensor, reward_tensor, done_tensor, new_obs_tensor, mc_vals = log_bias_evaluation(bias_eval_env,
                                                                                                         agent, logger,
                                                                                                         max_ep_len, alpha,
                                                                                                         gamma, n_mc_eval,
@@ -229,6 +229,14 @@ def redq_sac(env_name, seed=0, epochs='mbpo', steps_per_epoch=1000,
                                                 init_bias=np.mean(bias),
                                                 bias_state=obs_tensor, bias_action=act_tensor, 
                                                 mc_values=mc_vals)
+                obs_ = obs_tensor.cpu().numpy()
+                act_ = act_tensor.cpu().numpy()
+                reward_ = reward_tensor.cpu().numpy()
+                done_ = done_tensor.cpu().numpy()
+                new_obs_ = new_obs_tensor.cpu().numpy()
+
+                for i in range(obs_.shape[0]):
+                    agent.store_data(obs_[i], act_[i], reward_[i], new_obs_[i], done_[i])
 
                 
             else:
@@ -266,16 +274,16 @@ def redq_sac(env_name, seed=0, epochs='mbpo', steps_per_epoch=1000,
                 wandb.log({"TD_error": np.mean(td_replaybuffer)})
                 np.save(os.path.join(logger_kwargs["output_dir"], "result_td_eval.npy"), td_evaluation)
 
-            # if evaluate_bias or (auto_w_bias and not ((t + 1) > 150000)):
-            #     normalized_bias_sqr_per_state, normalized_bias_per_state, bias = log_bias_evaluation(bias_eval_env,
-            #                                                                                          agent, logger,
-            #                                                                                          max_ep_len, alpha,
-            #                                                                                          gamma, n_mc_eval,
-            #                                                                                          n_mc_cutoff)
-            #     wandb.log({"normalized_bias_sqr_per_state": np.abs(np.mean(normalized_bias_sqr_per_state)),
-            #                "normalized_bias_per_state": np.mean(normalized_bias_per_state),
-            #                "bias": np.mean(bias)
-            #                })
+            if evaluate_bias or (auto_w_bias and not ((t + 1) > 150000)):
+                normalized_bias_sqr_per_state, normalized_bias_per_state, bias, _, _, _, _, _, _ = log_bias_evaluation(bias_eval_env,
+                                                                                                     agent, logger,
+                                                                                                     max_ep_len, alpha,
+                                                                                                     gamma, n_mc_eval,
+                                                                                                     n_mc_cutoff)
+                wandb.log({"normalized_bias_sqr_per_state": np.abs(np.mean(normalized_bias_sqr_per_state)),
+                           "normalized_bias_per_state": np.mean(normalized_bias_per_state),
+                           "bias": np.mean(bias)
+                           })
 
             # reseed should improve reproducibility (should make results the same whether bias evaluation is on or not)
             if reseed_each_epoch:

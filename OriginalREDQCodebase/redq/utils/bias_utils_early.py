@@ -8,11 +8,15 @@ def get_mc_return_with_entropy_on_reset(bias_eval_env, agent, max_ep_len, alpha,
     final_mc_entropy_list = np.zeros(0)
     final_obs_list = []
     final_act_list = []
+    final_reward_list = []
+    final_done_list = []
+    final_new_obs_list = []
     while final_mc_list.shape[0] < n_mc_eval:
         # we continue if haven't collected enough data
-        o = bias_eval_env.reset()
+        o, _ = bias_eval_env.reset()
         # temporary lists
         reward_list, log_prob_a_tilda_list, obs_list, act_list = [], [], [], []
+        done_list, new_obs_list = [], []
         r, d, ep_ret, ep_len = 0, False, 0, 0
         discounted_return = 0
         discounted_return_with_entropy = 0
@@ -21,7 +25,10 @@ def get_mc_return_with_entropy_on_reset(bias_eval_env, agent, max_ep_len, alpha,
                 a, log_prob_a_tilda = agent.get_action_and_logprob_for_bias_evaluation(o)
             obs_list.append(o)
             act_list.append(a)
-            o, r, d, _ = bias_eval_env.step(a)
+            o, r, term, trunc, _ = bias_eval_env.step(a)
+            new_obs_list.append(o)
+            d = float(term or trunc)
+            done_list.append(d)
             ep_ret += r
             ep_len += 1
             reward_list.append(r)
@@ -45,14 +52,20 @@ def get_mc_return_with_entropy_on_reset(bias_eval_env, agent, max_ep_len, alpha,
             (final_mc_entropy_list, discounted_return_with_entropy_list[:n_mc_cutoff]))
         final_obs_list += obs_list[:n_mc_cutoff]
         final_act_list += act_list[:n_mc_cutoff]
-    return final_mc_list, final_mc_entropy_list, np.array(final_obs_list), np.array(final_act_list)
+        final_reward_list += reward_list[:n_mc_cutoff]
+        final_done_list += done_list[:n_mc_cutoff]
+        final_new_obs_list += new_obs_list[:n_mc_cutoff]
+    return final_mc_list, final_mc_entropy_list, np.array(final_obs_list), np.array(final_act_list), np.array(final_reward_list), np.array(final_done_list), np.array(final_new_obs_list)
 
 def log_bias_evaluation(bias_eval_env, agent, logger, max_ep_len, alpha, gamma, n_mc_eval, n_mc_cutoff):
-    final_mc_list, final_mc_entropy_list, final_obs_list, final_act_list = get_mc_return_with_entropy_on_reset(bias_eval_env, agent, max_ep_len, alpha, gamma, n_mc_eval, n_mc_cutoff)
+    final_mc_list, final_mc_entropy_list, final_obs_list, final_act_list, final_reward_list, final_done_list, final_new_obs_list = get_mc_return_with_entropy_on_reset(bias_eval_env, agent, max_ep_len, alpha, gamma, n_mc_eval, n_mc_cutoff)
     logger.store(MCDisRet=final_mc_list)
     logger.store(MCDisRetEnt=final_mc_entropy_list)
     obs_tensor = Tensor(final_obs_list).to(agent.device)
     acts_tensor = Tensor(final_act_list).to(agent.device)
+    reward_tensor = Tensor(final_reward_list).to(agent.device)
+    done_tensor = Tensor(final_done_list).to(agent.device)
+    new_obs_tensor = Tensor(final_new_obs_list).to(agent.device)
     with torch.no_grad():
         q_prediction = agent.get_ave_q_prediction_for_bias_evaluation(obs_tensor, acts_tensor).cpu().numpy().reshape(-1)
     bias = q_prediction - final_mc_entropy_list
@@ -69,3 +82,4 @@ def log_bias_evaluation(bias_eval_env, agent, logger, max_ep_len, alpha, gamma, 
     logger.store(NormQBias=normalized_bias_per_state)
     normalized_bias_sqr_per_state = bias_squared / final_mc_entropy_list_normalize_base
     logger.store(NormQBiasSqr=normalized_bias_sqr_per_state)
+    return normalized_bias_per_state, normalized_bias_sqr_per_state, bias, obs_tensor, acts_tensor, reward_tensor, done_tensor, new_obs_tensor,final_mc_entropy_list
