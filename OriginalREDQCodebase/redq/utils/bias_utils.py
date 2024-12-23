@@ -10,7 +10,7 @@ def get_mc_return_with_entropy_on_reset(bias_eval_env, agent, max_ep_len, alpha,
     final_act_list = []
     while final_mc_list.shape[0] < n_mc_eval:
         # we continue if haven't collected enough data
-        o, _ = bias_eval_env.reset()
+        o = bias_eval_env.reset()
         # temporary lists
         reward_list, log_prob_a_tilda_list, obs_list, act_list = [], [], [], []
         r, d, ep_ret, ep_len = 0, False, 0, 0
@@ -21,8 +21,7 @@ def get_mc_return_with_entropy_on_reset(bias_eval_env, agent, max_ep_len, alpha,
                 a, log_prob_a_tilda = agent.get_action_and_logprob_for_bias_evaluation(o)
             obs_list.append(o)
             act_list.append(a)
-            o, r, term, trunc, _ = bias_eval_env.step(a)
-            d = float(term or trunc)
+            o, r, d, _ = bias_eval_env.step(a)
             ep_ret += r
             ep_len += 1
             reward_list.append(r)
@@ -70,4 +69,4 @@ def log_bias_evaluation(bias_eval_env, agent, logger, max_ep_len, alpha, gamma, 
     logger.store(NormQBias=normalized_bias_per_state)
     normalized_bias_sqr_per_state = bias_squared / final_mc_entropy_list_normalize_base
     logger.store(NormQBiasSqr=normalized_bias_sqr_per_state)
-    return normalized_bias_per_state, normalized_bias_sqr_per_state, bias
+    return normalized_bias_sqr_per_state, normalized_bias_per_state, bias
