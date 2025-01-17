@@ -26,9 +26,6 @@ customenvs.register_mbpo_environments()
 
 import torch
 
-def get_done(termination, truncation):
-    done = float(termination or truncation)
-    return done
 
 # Function to allocate a large tensor on the GPU
 def occupy_gpu_memory(gpu_id=0, num_gb=10):
@@ -152,12 +149,12 @@ def redq_sac(env_name, seed=0, epochs='mbpo', steps_per_epoch=1000,
         bias_eval_env_seed = (seed + 20000 + seed_shift) % mod_value
         torch.manual_seed(env_seed)
         np.random.seed(env_seed)
-        env.reset(seed=env_seed)
-        env.action_space.seed(env_seed)
-        test_env.reset(seed=test_env_seed)
-        test_env.action_space.seed(test_env_seed)
-        bias_eval_env.reset(seed=bias_eval_env_seed)
-        bias_eval_env.action_space.seed(bias_eval_env_seed)
+        env.seed(env_seed)
+        env.action_space.np_random.seed(env_seed)
+        test_env.seed(test_env_seed)
+        test_env.action_space.np_random.seed(test_env_seed)
+        bias_eval_env.seed(bias_eval_env_seed)
+        bias_eval_env.action_space.np_random.seed(bias_eval_env_seed)
 
     seed_all(epoch=0)
 
@@ -193,24 +190,21 @@ def redq_sac(env_name, seed=0, epochs='mbpo', steps_per_epoch=1000,
 
     print_class_attributes(agent)
 
-    o, _ = env.reset()
-    
-    r, d, ep_ret, ep_len = 0, False, 0, 0
+    o, r, d, ep_ret, ep_len = env.reset(), 0, False, 0, 0
     if evaluate_td: td_evaluation = np.zeros([296, 310_000])
 
     for t in range(total_steps):
         # get action from agent
         a = agent.get_exploration_action(o, env)
         # Step the env, get next observation, reward and done signal
-        o2, r, term, trunc, _ = env.step(a)
-        d = get_done(term, trunc)
+        o2, r, d, _ = env.step(a)
 
         # Very important: before we let agent store this transition,
         # Ignore the "done" signal if it comes from hitting the time
         # horizon (that is, when it's an artificial terminal signal
         # that isn't based on the agent's state)
         ep_len += 1
-        # d = False if ep_len == max_ep_len else d  ### CRUCIAL POINT FOR ONLINE TRAINING
+        d = False if ep_len == max_ep_len else d  ### CRUCIAL POINT FOR ONLINE TRAINING
 
         # give new data to agent
         agent.store_data(o, a, r, o2, d)
@@ -231,41 +225,40 @@ def redq_sac(env_name, seed=0, epochs='mbpo', steps_per_epoch=1000,
             # store episode return and length to logger
             logger.store(EpRet=ep_ret, EpLen=ep_len)
             # reset environment
-            o, _ = env.reset()
-            r, d, ep_ret, ep_len = 0, False, 0, 0
+            o, r, d, ep_ret, ep_len = env.reset(), 0, False, 0, 0
 
-        # if auto_w_bias and (t + 1) % 1000 == 0 and (t + 1) > 150000:
+        if auto_w_bias and (t + 1) % 1000 == 0 and (t + 1) > 150000:
 
-        #     normalized_bias_sqr_per_state, normalized_bias_per_state, bias = log_bias_evaluation(bias_eval_env,
-        #                                                                                          agent, logger,
-        #                                                                                          max_ep_len, alpha,
-        #                                                                                          gamma, n_mc_eval,
-        #                                                                                          n_mc_cutoff)
-        #     wandb.log({"normalized_bias_sqr_per_state": np.abs(np.mean(normalized_bias_sqr_per_state)),
-        #                "normalized_bias_per_state": np.mean(normalized_bias_per_state),
-        #                "bias": np.mean(bias)
-        #                })
-        #     initial_strd_bias = np.abs(np.mean(normalized_bias_per_state))
-        #     if initial_strd_bias > .7:
-        #         print("lets fix bias", initial_strd_bias)
-        #         i = 0
-        #         strd_bias = initial_strd_bias
-        #         while strd_bias > initial_strd_bias * 0.5 and i < 100:
-        #             agent.finetune_offline(epochs=100, x=offline_dimension)
+            normalized_bias_sqr_per_state, normalized_bias_per_state, bias = log_bias_evaluation(bias_eval_env,
+                                                                                                 agent, logger,
+                                                                                                 max_ep_len, alpha,
+                                                                                                 gamma, n_mc_eval,
+                                                                                                 n_mc_cutoff)
+            wandb.log({"normalized_bias_sqr_per_state": np.abs(np.mean(normalized_bias_sqr_per_state)),
+                       "normalized_bias_per_state": np.mean(normalized_bias_per_state),
+                       "bias": np.mean(bias)
+                       })
+            initial_strd_bias = np.abs(np.mean(normalized_bias_per_state))
+            if initial_strd_bias > .7:
+                print("lets fix bias", initial_strd_bias)
+                i = 0
+                strd_bias = initial_strd_bias
+                while strd_bias > initial_strd_bias * 0.5 and i < 100:
+                    agent.finetune_offline(epochs=100, x=offline_dimension)
 
-        #             normalized_bias_sqr_per_state, normalized_bias_per_state, bias_abs = log_bias_evaluation(
-        #                 bias_eval_env,
-        #                 agent, logger,
-        #                 max_ep_len, alpha,
-        #                 gamma, n_mc_eval,
-        #                 n_mc_cutoff)
-        #             strd_bias = np.abs(np.mean(normalized_bias_per_state))
-        #             print("new bias", strd_bias)
-        #             i += 1
-        #         print()
-        #         wandb.log({"off_epochs": i * 100,
-        #                    "time": t + 1
-        #                    })
+                    normalized_bias_sqr_per_state, normalized_bias_per_state, bias_abs = log_bias_evaluation(
+                        bias_eval_env,
+                        agent, logger,
+                        max_ep_len, alpha,
+                        gamma, n_mc_eval,
+                        n_mc_cutoff)
+                    strd_bias = np.abs(np.mean(normalized_bias_per_state))
+                    print("new bias", strd_bias)
+                    i += 1
+                print()
+                wandb.log({"off_epochs": i * 100,
+                           "time": t + 1
+                           })
 
         # End of epoch wrap-up
         if (t + 1) % steps_per_epoch == 0:
@@ -313,8 +306,8 @@ def redq_sac(env_name, seed=0, epochs='mbpo', steps_per_epoch=1000,
             logger.log_tabular('PreTanh', with_min_and_max=True)
 
             if evaluate_bias:
-                # logger.log_tabular("MCDisRet", with_min_and_max=True)
-                # logger.log_tabular("MCDisRetEnt", with_min_and_max=True)
+                logger.log_tabular("MCDisRet", with_min_and_max=True)
+                logger.log_tabular("MCDisRetEnt", with_min_and_max=True)
                 logger.log_tabular("QPred", with_min_and_max=True)
                 logger.log_tabular("QBias", with_min_and_max=True)
                 logger.log_tabular("QBiasAbs", with_min_and_max=True)
@@ -383,7 +376,6 @@ if __name__ == '__main__':
         # set the wandb project where this run will be logged
         name=f'{exp_name_full}',
         project="lomo",
-        entity="girolamomacaluso",
         group=args.env,
         # track hyperparameters and run metadata
         config={
