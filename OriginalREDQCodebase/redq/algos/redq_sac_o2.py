@@ -423,7 +423,7 @@ class REDQSACAgent(object):
                     ave_q = torch.mean(q_a_tilda_cat, dim=1, keepdim=True)
                     # print(f"SHAPES -> A pi: {self.policy_net.forward(obs_tensor, False, False)[0].shape}, A DB: {acts_tensor.shape}")
                     # input()
-                    if (self.policy_type == 'default' or self.policy_type == 'None'):
+                    if (self.policy_type == 'default' or self.policy_type == 'only'):
                         policy_loss = (self.alpha * log_prob_a_tilda - ave_q).mean()
                     elif self.policy_type == 'bc':
                         policy_loss = (self.alpha * log_prob_a_tilda - ave_q).mean() + 0.5 * F.mse_loss(a_tilda,
