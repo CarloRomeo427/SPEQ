@@ -1,4 +1,5 @@
 # SPEQ: Offline Stabilization Phases for Efficient Q-Learning 🚀
+[![arXiv](https://img.shields.io/badge/arXiv-Paper-<COLOR>.svg)](http://arxiv.org/abs/2501.08669)
 
 Welcome to the official repository for **SPEQ**, a novel reinforcement learning algorithm designed to optimize computational efficiency while maintaining high sample efficiency.
 
@@ -38,3 +39,12 @@ This implementation is inspired by the work on Dropout Q-Functions by Takuya Hir
 
 Happy training! 🚀
 
+## Citation
+```bibtex
+@article{romeo2025speq,
+  title={SPEQ: Offline Stabilization Phases for Efficient Q-Learning in High Update-To-Data Ratio Reinforcement Learning},
+  author={Romeo, Carlo and Macaluso, Girolamo and Sestini, Alessandro and Bagdanov, Andrew D},
+  journal={arXiv preprint arXiv:2501.08669},
+  year={2025}
+}
+```
