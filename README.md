@@ -1,4 +1,4 @@
-# SPEQ: Offline Stabilization Phases for Efficient Q-Learning 🚀
+# SPEQ: Offline Stabilization Phases for Efficient Q-Learning 🤖
 [![arXiv](https://img.shields.io/badge/arXiv-Paper-<COLOR>.svg)](http://arxiv.org/abs/2501.08669)
 
 Welcome to the official repository for **SPEQ**, a novel reinforcement learning algorithm designed to optimize computational efficiency while maintaining high sample efficiency.
@@ -26,7 +26,7 @@ Follow these instructions to set up and run SPEQ:
 git clone https://github.com/CarloRomeo427/SPEQ.git
 cd SPEQ
 pip install -r requirements.txt
-python train_speq.py
+python main.py
 ```
 
 ## Future Work
