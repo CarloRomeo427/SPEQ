@@ -37,8 +37,6 @@ Future enhancements include automatic determination of the timing and duration o
 
 This implementation is inspired by the work on Dropout Q-Functions by Takuya Hiraoka et al., available at https://github.com/TakuyaHiraoka/Dropout-Q-Functions-for-Doubly-Efficient-Reinforcement-Learning.
 
-Happy training! 🚀
-
 ## Citation
 ```bibtex
 @article{romeo2025speq,
@@ -48,3 +46,5 @@ Happy training! 🚀
   year={2025}
 }
 ```
+
+Happy training! 🚀
